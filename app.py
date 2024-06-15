@@ -510,8 +510,8 @@ def source_rap():
 
 import faiss
 from sentence_transformers import SentenceTransformer
-
-
+import requests
+os.environ["TOKENIZERS_PARALLELISM"] = "true"
 model = SentenceTransformer("OrdalieTech/Solon-embeddings-large-0.1")
 print(model.encode("coucou"))
 index = faiss.read_index("/opt/bazoulay/rap.index")
@@ -524,7 +524,7 @@ def search(query_embedding, k=10):
 
 API_URL = "https://api-inference.huggingface.co/models/OrdalieTech/Solon-embeddings-large-0.1"
 headers = {"Authorization": "Bearer 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"}
-os.environ["TOKENIZERS_PARALLELISM"] = "true"
+
 
 @app.route("/semantic_search_rap")
 def semantic_search_rap():

@@ -526,7 +526,7 @@ def search(query_embedding, k=10):
 @app.route("/semantic_search_rap")
 def semantic_search_rap():
     query = request.args.get("query")
-    k = request.args.get("n")
+    k = int(request.args.get("n"))
     print("semantic search" + query)
     query_embedding = model.encode(query)
     result_indices = search(query_embedding,k = k)

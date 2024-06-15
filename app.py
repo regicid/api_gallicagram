@@ -516,7 +516,6 @@ import torch
 torch.set_num_threads(1)
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 model = SentenceTransformer("OrdalieTech/Solon-embeddings-large-0.1")
-print(model.encode("coucou"))
 index = faiss.read_index("/opt/bazoulay/rap.index")
 corpus_faiss = pd.read_csv("/opt/bazoulay/api_gallicagram/corpus_faiss.csv")
 
@@ -531,6 +530,6 @@ def semantic_search_rap():
     query_embedding = model.encode(query)
     print(query_embedding)
     result_indices = search(query_embedding)
-    return corpus_faiss.loc[result_indices].to_csv()
+    return render_template('index.html', tables=[df.to_html(classes='data')], titles=df.columns.values)
 
 

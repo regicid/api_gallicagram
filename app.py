@@ -512,6 +512,8 @@ import faiss
 from sentence_transformers import SentenceTransformer
 import requests
 import os
+import torch
+torch.set_num_threads(1)
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 model = SentenceTransformer("OrdalieTech/Solon-embeddings-large-0.1")
 print(model.encode("coucou"))
@@ -532,7 +534,7 @@ def semantic_search_rap():
     query = request.args.get("query")
     print(model)
     response = requests.post(API_URL, headers=headers, json={"inputs": query})
-    print(response)
+    print(response.content)
     query_embedding = model.encode("coucou")
     print(query_embedding)
     result_indices = search(query_embedding)

@@ -513,6 +513,7 @@ from sentence_transformers import SentenceTransformer
 
 
 model = SentenceTransformer("OrdalieTech/Solon-embeddings-large-0.1")
+print(model.encode("coucou"))
 index = faiss.read_index("/opt/bazoulay/rap.index")
 corpus_faiss = pd.read_csv("/opt/bazoulay/api_gallicagram/corpus_faiss.csv")
 
@@ -520,11 +521,24 @@ def search(query_embedding, k=10):
     distances, indices = index.search(np.array([query_embedding]), k)
     return indices[0]
 
+
+API_URL = "https://api-inference.huggingface.co/models/OrdalieTech/Solon-embeddings-large-0.1"
+headers = {"Authorization": "Bearer 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"}
+
+def query(payload):
+    response = requests.post(API_URL, headers=headers, json={
+    "inputs": "Today is a sunny day and I will get some ice cream."})
+    return response.json()
+    
+output = query()
+
 @app.route("/semantic_search_rap")
 def semantic_search_rap():
     query = request.args.get("query")
-    print(type(query))
-    query_embedding = model.encode(query)
+    print(model)
+    response = requests.post(API_URL, headers=headers, json={"inputs": query})
+    print(response)
+    query_embedding = model.encode("coucou")
     print(query_embedding)
     result_indices = search(query_embedding)
     return corpus_faiss.loc[result_indices].to_csv()

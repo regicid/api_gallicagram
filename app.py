@@ -526,10 +526,9 @@ def search(query_embedding, k=10):
 @app.route("/semantic_search_rap")
 def semantic_search_rap():
     query = request.args.get("query")
-    print(model)
+    print("semantic search" + query)
     query_embedding = model.encode(query)
-    print(query_embedding)
     result_indices = search(query_embedding)
-    return render_template('index.html', tables=[df.to_html(classes='data')], titles=df.columns.values)
+    return render_template('index.html', tables=[corpus_faiss.loc[result_indices].to_html(classes='data')], titles=corpus_faiss.columns.values)
 
 

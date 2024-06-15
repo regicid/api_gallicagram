@@ -523,7 +523,9 @@ def search(query_embedding, k=10):
 @app.route("/semantic_search_rap")
 def semantic_search_rap():
     query = request.args.get("query")
+    print(query)
     query_embedding = model.encode(query)
+    print(query_embedding)
     result_indices = search(query_embedding)
     return corpus_faiss.loc[result_indices].to_csv()
 

@@ -525,6 +525,6 @@ def semantic_search_rap():
     query = request.args.get("query")
     query_embedding = model.encode(query)
     result_indices = search(query_embedding)
-    return [chunks[i] + "              " for i in result_indices]
+    return corpus_faiss.loc[result_indices].to_csv()
 
 

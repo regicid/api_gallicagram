@@ -524,18 +524,11 @@ def search(query_embedding, k=10):
     distances, indices = index.search(np.array([query_embedding]), k)
     return indices[0]
 
-
-API_URL = "https://api-inference.huggingface.co/models/OrdalieTech/Solon-embeddings-large-0.1"
-headers = {"Authorization": "Bearer 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"}
-
-
 @app.route("/semantic_search_rap")
 def semantic_search_rap():
     query = request.args.get("query")
     print(model)
-    response = requests.post(API_URL, headers=headers, json={"inputs": query})
-    print(response.content)
-    query_embedding = model.encode("coucou")
+    query_embedding = model.encode(query)
     print(query_embedding)
     result_indices = search(query_embedding)
     return corpus_faiss.loc[result_indices].to_csv()

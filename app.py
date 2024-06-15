@@ -11,12 +11,6 @@ from waitress import serve
 from functools import lru_cache
 app = Flask(__name__)
 
-
-import faiss
-from sentence_transformers import SentenceTransformer
-model = SentenceTransformer("OrdalieTech/Solon-embeddings-large-0.1")
-index = faiss.read_index("/opt/bazoulay/rap.index")
-
 def get_db(corpus,n):
     if corpus=="livres":
         DATABASE = f"/opt/bazoulay/ngram/{n}gram.db"
@@ -511,3 +505,26 @@ def source_rap():
     corpus = corpus.drop("pageviews",axis=1)
     corpus.year = corpus.year.astype("int")
     return corpus.set_index("title").to_csv()
+
+
+
+import faiss
+from sentence_transformers import SentenceTransformer
+
+
+model = SentenceTransformer("OrdalieTech/Solon-embeddings-large-0.1")
+index = faiss.read_index("/opt/bazoulay/rap.index")
+corpus_faiss = pd.read_csv("/opt/bazoulay/api_gallicagram/corpus_faiss.csv")
+
+def search(query_embedding, k=10):
+    distances, indices = index.search(np.array([query_embedding]), k)
+    return indices[0]
+
+@app.route("/semantic_search_rap")
+def semantic_search_rap():
+    query = request.args.get("query")
+    query_embedding = model.encode(query)
+    result_indices = search(query_embedding)
+    return [chunks[i] + "              " for i in result_indices]
+
+

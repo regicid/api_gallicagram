@@ -511,6 +511,7 @@ def source_rap():
 import faiss
 from sentence_transformers import SentenceTransformer
 import requests
+import os
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 model = SentenceTransformer("OrdalieTech/Solon-embeddings-large-0.1")
 print(model.encode("coucou"))

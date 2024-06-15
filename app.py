@@ -525,12 +525,6 @@ def search(query_embedding, k=10):
 API_URL = "https://api-inference.huggingface.co/models/OrdalieTech/Solon-embeddings-large-0.1"
 headers = {"Authorization": "Bearer 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"}
 
-def query(payload):
-    response = requests.post(API_URL, headers=headers, json={
-    "inputs": "Today is a sunny day and I will get some ice cream."})
-    return response.json()
-    
-output = query()
 
 @app.route("/semantic_search_rap")
 def semantic_search_rap():

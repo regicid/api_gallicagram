@@ -131,7 +131,7 @@ def query():
             rubrique_condition = f"and rubrique in {tuple(rubrique.split(' '))}"
         else:
             rubrique_condition = f"and rubrique=\"{rubrique}\""
-        query = query.replace("and annee between",f'and {rubrique_condition} and annee between')
+        query = query.replace("and annee between",f'{rubrique_condition} and annee between')
     print(query)
     db_df = pd.read_sql_query(query,conn)
     conn.close()

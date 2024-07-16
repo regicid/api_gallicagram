@@ -136,7 +136,7 @@ def query():
         if by_rubrique and resolution=="annee":
             query = query + ",rubrique"
         if not by_rubrique and resolution=="mois":
-            query = query.replace("*","sum(n) as n,annee,mois,gram") + "group by annee,mois"
+            query = query.replace("*","sum(n) as n,annee,mois,gram") + " group by annee,mois"
     print(query)
     db_df = pd.read_sql_query(query,conn)
     conn.close()

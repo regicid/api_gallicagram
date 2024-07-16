@@ -130,7 +130,7 @@ def query():
     conn.close()
     base = get_base(corpus,n)
     base = base.loc[(base.annee>=int(fr))&(base.annee<=int(to))]
-    if rubrique is not None and :
+    if rubrique is not None:
         base = base.loc[np.isin(base.rubrique,rubrique.split(" "))]
     if resolution=="mois" and corpus in corpus_journaliers + ["presse"]:base = base.groupby(["annee","mois"]).agg({'total':'sum'}).reset_index()
     if resolution=="annee" and corpus in corpus_journaliers + ["presse","lemonde_rubriques"]:base = base.groupby(["annee"]).agg({'total':'sum'}).reset_index()

@@ -131,7 +131,7 @@ def query():
     if rubrique is not None:
         base = base.loc[base.rubrique == rubrique]
     if resolution=="mois" and corpus in corpus_journaliers + ["presse"]:base = base.groupby(["annee","mois"]).agg({'total':'sum'}).reset_index()
-    if resolution=="annee" and corpus in corpus_journaliers + ["presse"]:base = base.groupby(["annee"]).agg({'total':'sum'}).reset_index()
+    if resolution=="annee" and corpus in corpus_journaliers + ["presse","lemonde_rubriques"]:base = base.groupby(["annee"]).agg({'total':'sum'}).reset_index()
     db_df = pd.merge(db_df,base,how="right")
     db_df.n = db_df.n.fillna(0)
     db_df["gram"] = word
@@ -525,8 +525,8 @@ import torch
 torch.set_num_threads(1)
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 model = SentenceTransformer("OrdalieTech/Solon-embeddings-large-0.1")
-index = faiss.read_index("/opt/bazoulay/rap.index")
-corpus_faiss = pd.read_csv("/opt/bazoulay/api_gallicagram/corpus_faiss.csv")
+#index = faiss.read_index("/opt/bazoulay/rap.index")
+#corpus_faiss = pd.read_csv("/opt/bazoulay/api_gallicagram/corpus_faiss.csv")
 
 def search(query_embedding, k=10):
     distances, indices = index.search(np.array([query_embedding]), k)

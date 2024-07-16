@@ -126,6 +126,7 @@ def query():
         by_rubrique = args["by_rubrique"]
         print(rubrique)
         query = query.replace("and annee between",f'and rubrique in "{tuple(rubrique.split(" "))}" and annee between')
+    print(query)
     db_df = pd.read_sql_query(query,conn)
     conn.close()
     base = get_base(corpus,n)

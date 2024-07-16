@@ -125,7 +125,7 @@ def query():
     if rubrique is not None:
         by_rubrique = args["by_rubrique"]
         print(rubrique)
-        query = query.replace("and annee between",f'and rubrique in "{tuple(rubrique.split(" "))}" and annee between')
+        query = query.replace("and annee between",f'and rubrique in {tuple(rubrique.split(" "))} and annee between')
     print(query)
     db_df = pd.read_sql_query(query,conn)
     conn.close()
@@ -524,8 +524,8 @@ import faiss
 #from sentence_transformers import SentenceTransformer
 import requests
 import os
-import torch
-torch.set_num_threads(1)
+#import torch
+#torch.set_num_threads(1)
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 #model = SentenceTransformer("OrdalieTech/Solon-embeddings-large-0.1")
 #index = faiss.read_index("/opt/bazoulay/rap.index")

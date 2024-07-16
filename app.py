@@ -134,7 +134,7 @@ def query():
             rubrique_condition = f"and rubrique=\"{rubrique}\""
         query = query.replace("and annee between",f'{rubrique_condition} and annee between')
         if by_rubrique and resolution=="annee":
-            query = query + ",rubrique"
+            query = query.replace(",gram",",gram,rubrique") + ",rubrique"
         if not by_rubrique and resolution=="mois":
             query = query.replace("*","sum(n) as n,annee,mois,gram") + " group by annee,mois"
     print(query)

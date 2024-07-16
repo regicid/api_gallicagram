@@ -126,12 +126,17 @@ def query():
         try:
             by_rubrique = eval(args["by_rubrique"])
         except:
-            by_rubrique = False
+             = False
         if " " in rubrique:
             rubrique_condition = f"and rubrique in {tuple(rubrique.split(' '))}"
         else:
             rubrique_condition = f"and rubrique=\"{rubrique}\""
         query = query.replace("and annee between",f'{rubrique_condition} and annee between')
+        if by_rubrique and resolution=="annee":
+            query = query + ",rubrique"
+        if not by_rubrique and resolution=="mois":
+            query = query.replace("*","sum(n) as n,annee,mois,gram") + "group by annee,mois"
+
     print(query)
     db_df = pd.read_sql_query(query,conn)
     conn.close()
@@ -139,6 +144,8 @@ def query():
     base = base.loc[(base.annee>=int(fr))&(base.annee<=int(to))]
     if rubrique is not None:
         base = base.loc[np.isin(base.rubrique,rubrique.split(" "))]
+        if not by_rubrique:
+            base = base.groupby(["annee","mois"]).agg({"total":"sum"}).reset_index()
     if resolution=="mois" and corpus in corpus_journaliers + ["presse"]:base = base.groupby(["annee","mois"]).agg({'total':'sum'}).reset_index()
     if resolution=="annee" and corpus in corpus_journaliers + ["presse","lemonde_rubriques"]:base = base.groupby(["annee"]).agg({'total':'sum'}).reset_index()
     db_df = pd.merge(db_df,base,how="right")

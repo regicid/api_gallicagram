@@ -139,6 +139,7 @@ def query():
             query = query.replace("*","sum(n) as n,annee,mois,gram") + " group by annee,mois"
     print(query)
     db_df = pd.read_sql_query(query,conn)
+    print(db_df)
     conn.close()
     base = get_base(corpus,n)
     base = base.loc[(base.annee>=int(fr))&(base.annee<=int(to))]

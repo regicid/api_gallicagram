@@ -123,9 +123,15 @@ def query():
         if resolution=="mois" and corpus in corpus_journaliers:
             query = f"SELECT * FROM gram_mois where gram=\"{word}\" and annee between {fr} and {to}"
     if rubrique is not None:
-        by_rubrique = args["by_rubrique"]
-        print(rubrique)
-        query = query.replace("and annee between",f'and rubrique in {tuple(rubrique.split(" "))} and annee between')
+        try:
+            by_rubrique = eval(args["by_rubrique"])
+        except:
+            by_rubrique = False
+        if " " in rubrique:
+            rubrique_condition = f"and rubrique in {tuple(rubrique.split(' '))}"
+        else:
+            rubrique_condition = f"and rubrique=\"{rubrique}\""
+        query = query.replace("and annee between",f'and {rubrique_condition} and annee between')
     print(query)
     db_df = pd.read_sql_query(query,conn)
     conn.close()

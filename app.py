@@ -111,7 +111,7 @@ def query():
     n = len(word.split(" "))
     conn = get_db(corpus,n)
     corpus_journaliers = ["lemonde","huma","paris","figaro","moniteur","temps","petit_journal","constitutionnel","journal_des_debats","la_presse","petit_parisien"]
-    if resolution=="default" or resolution=="jour" or corpus=="livres" or (resolution=="mois" and corpus in ["presse","ddb"]):
+    if resolution=="default" or resolution=="jour" or corpus=="livres" or (resolution=="mois" and corpus in ["presse","ddb","lemonde_rubriques"]):
         query = f"SELECT * FROM gram where gram=\"{word}\" and annee between {fr} and {to}"
     else:
         if resolution=="annee":
@@ -126,7 +126,8 @@ def query():
         try:
             by_rubrique = eval(args["by_rubrique"])
         except:
-             = False
+            by_rubrique = False
+        print(by_rubrique)
         if " " in rubrique:
             rubrique_condition = f"and rubrique in {tuple(rubrique.split(' '))}"
         else:
@@ -136,7 +137,6 @@ def query():
             query = query + ",rubrique"
         if not by_rubrique and resolution=="mois":
             query = query.replace("*","sum(n) as n,annee,mois,gram") + "group by annee,mois"
-
     print(query)
     db_df = pd.read_sql_query(query,conn)
     conn.close()

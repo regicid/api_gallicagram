@@ -106,7 +106,7 @@ def query():
         resolution = "default"
     try:
         rubrique = args["rubrique"]
-    except=
+    except:
         rubrique=None
     n = len(word.split(" "))
     conn = get_db(corpus,n)

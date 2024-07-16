@@ -123,7 +123,7 @@ def query():
         if resolution=="mois" and corpus in corpus_journaliers:
             query = f"SELECT * FROM gram_mois where gram=\"{word}\" and annee between {fr} and {to}"
     if rubrique is not None:
-        query = query.replace("and annee between",f"and rubrique={rubrique} and annee between")
+        query = query.replace("and annee between",f"and rubrique="{rubrique}" and annee between")
     db_df = pd.read_sql_query(query,conn)
     conn.close()
     base = get_base(corpus,n)

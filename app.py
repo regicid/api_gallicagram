@@ -124,14 +124,13 @@ def query():
             query = f"SELECT * FROM gram_mois where gram=\"{word}\" and annee between {fr} and {to}"
     if rubrique is not None:
         by_rubrique = args["by_rubrique"]
-        print(rubrique)
         query = query.replace("and annee between",f'and rubrique in "{tuple(rubrique.split(' '))}" and annee between')
     db_df = pd.read_sql_query(query,conn)
     conn.close()
     base = get_base(corpus,n)
     base = base.loc[(base.annee>=int(fr))&(base.annee<=int(to))]
     if rubrique is not None and :
-        base = base.loc[np.isin(base.rubrique,rubrique.split(" "))]
+        base = base.loc[base.rubrique == rubrique]
     if resolution=="mois" and corpus in corpus_journaliers + ["presse"]:base = base.groupby(["annee","mois"]).agg({'total':'sum'}).reset_index()
     if resolution=="annee" and corpus in corpus_journaliers + ["presse","lemonde_rubriques"]:base = base.groupby(["annee"]).agg({'total':'sum'}).reset_index()
     db_df = pd.merge(db_df,base,how="right")

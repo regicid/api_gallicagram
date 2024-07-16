@@ -524,7 +524,7 @@ import os
 import torch
 torch.set_num_threads(1)
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
-model = SentenceTransformer("OrdalieTech/Solon-embeddings-large-0.1")
+#model = SentenceTransformer("OrdalieTech/Solon-embeddings-large-0.1")
 #index = faiss.read_index("/opt/bazoulay/rap.index")
 #corpus_faiss = pd.read_csv("/opt/bazoulay/api_gallicagram/corpus_faiss.csv")
 

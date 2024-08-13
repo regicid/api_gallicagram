@@ -134,7 +134,7 @@ def query():
             rubrique_condition = f"and rubrique=\"{rubrique}\""
         query = query.replace("and annee between",f'{rubrique_condition} and annee between')
         if by_rubrique and resolution=="annee":
-            query = query.replace(",gram",",gram,rubrique") + ",rubrique"
+            query = query.replace(",gram","") + ",rubrique"
         if not by_rubrique and resolution=="mois":
             query = query.replace("*","sum(n) as n,annee,mois,gram") + " group by annee,mois"
     print(query)
@@ -501,11 +501,7 @@ def query_persee():
     print(word)
     return db_df.to_csv(index=False)
 
-@lru_cache(maxsize=1)
-def load_corpus():
-    return pd.read_csv("~/LRFAF/corpus.csv")
-
-corpus_rap = load_corpus()
+corpus_rap = pd.read_csv("~/LRFAF/corpus.csv")
 
 @app.route("/source_rap")
 def source_rap():

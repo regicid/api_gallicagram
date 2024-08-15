@@ -131,7 +131,7 @@ def query():
         if " " in rubrique and len(rubrique.split(' ')) < 8:
             rubrique_condition = f"and rubrique in {tuple(rubrique.split(' '))}"
         elif len(rubrique.split(' ')) == 8:
-            rubrique_condition == ""
+            rubrique_condition = ""
         else:
             rubrique_condition = f"and rubrique=\"{rubrique}\""
         query = query.replace("and annee between",f'{rubrique_condition} and annee between')

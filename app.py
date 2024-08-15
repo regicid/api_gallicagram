@@ -150,6 +150,7 @@ def query():
         grouping = ["annee"]
         if resolution=="mois":grouping += "mois"
         if by_rubrique:grouping += "rubrique"
+        print(grouping)
         base = base.groupby(grouping).agg({"total":"sum"}).reset_index()
     if resolution=="mois" and corpus in corpus_journaliers + ["presse"]:base = base.groupby(["annee","mois"]).agg({'total':'sum'}).reset_index()
     if resolution=="annee" and corpus in corpus_journaliers + ["presse"]:base = base.groupby(["annee"]).agg({'total':'sum'}).reset_index()

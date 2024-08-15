@@ -128,8 +128,10 @@ def query():
         except:
             by_rubrique = False
         print(by_rubrique)
-        if " " in rubrique:
+        if " " in rubrique and len(rubrique.split(' ') < 8:
             rubrique_condition = f"and rubrique in {tuple(rubrique.split(' '))}"
+        else if len(rubrique.split(' ') == 8:
+            rubrique_condition == ""
         else:
             rubrique_condition = f"and rubrique=\"{rubrique}\""
         query = query.replace("and annee between",f'{rubrique_condition} and annee between')

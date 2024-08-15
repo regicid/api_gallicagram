@@ -127,7 +127,8 @@ def query():
             by_rubrique = eval(args["by_rubrique"])
         except:
             by_rubrique = False
-        print(by_rubrique)
+        if by_rubrique:
+            query = query = query.replace(",gram",",rubrique,gram")
         if " " in rubrique and len(rubrique.split(' ')) < 8:
             rubrique_condition = f"and rubrique in {tuple(rubrique.split(' '))}"
         elif len(rubrique.split(' ')) == 8:

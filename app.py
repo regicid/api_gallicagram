@@ -148,8 +148,8 @@ def query():
     if corpus=="lemonde_rubriques":
         base = base.loc[np.isin(base.rubrique,rubrique.split(" "))]
         grouping = ["annee"]
-        if resolution=="mois":grouping += "mois"
-        if by_rubrique:grouping += "rubrique"
+        if resolution=="mois":grouping.append("mois")
+        if by_rubrique:grouping.append("rubrique")
         print(grouping)
         base = base.groupby(grouping).agg({"total":"sum"}).reset_index()
     if resolution=="mois" and corpus in corpus_journaliers + ["presse"]:base = base.groupby(["annee","mois"]).agg({'total':'sum'}).reset_index()

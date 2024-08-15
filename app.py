@@ -145,12 +145,14 @@ def query():
     conn.close()
     base = get_base(corpus,n)
     base = base.loc[(base.annee>=int(fr))&(base.annee<=int(to))]
-    if rubrique is not None:
+    if corpus=="lemonde_rubriques":
         base = base.loc[np.isin(base.rubrique,rubrique.split(" "))]
-        if not by_rubrique:
-            base = base.groupby(["annee","mois"]).agg({"total":"sum"}).reset_index()
+        grouping = ["annee"]
+        if resolution=="mois":grouping += "mois"
+        if by_rubrique:grouping += "rubrique"
+        base = base.groupby(grouping).agg({"total":"sum"}).reset_index()
     if resolution=="mois" and corpus in corpus_journaliers + ["presse"]:base = base.groupby(["annee","mois"]).agg({'total':'sum'}).reset_index()
-    if resolution=="annee" and corpus in corpus_journaliers + ["presse","lemonde_rubriques"]:base = base.groupby(["annee"]).agg({'total':'sum'}).reset_index()
+    if resolution=="annee" and corpus in corpus_journaliers + ["presse"]:base = base.groupby(["annee"]).agg({'total':'sum'}).reset_index()
     db_df = pd.merge(db_df,base,how="right")
     db_df.n = db_df.n.fillna(0)
     db_df["gram"] = word

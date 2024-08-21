@@ -476,7 +476,7 @@ def query_persee():
         by_revue = eval(args["by_revue"])
     except:
         by_revue = False
-    if revue !="all":
+    if revue !="all" and len(revue.split(' ')) < 362:
         if " " in revue:
             revue_condition = f"and revue in {tuple(revue.split(' '))}"
         else:

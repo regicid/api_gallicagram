@@ -129,7 +129,7 @@ def query():
             by_rubrique = False
         if by_rubrique:
             query = query = query.replace(",gram",",rubrique,gram")
-        if " " in rubrique and len(rubrique.split(' ')) < 8:
+        if rubrique is not None and " " in rubrique and len(rubrique.split(' ')) < 8:
             rubrique_condition = f"and rubrique in {tuple(rubrique.split(' '))}"
         elif len(rubrique.split(' ')) == 8 or rubrique is None:
             rubrique_condition = ""

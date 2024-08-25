@@ -147,7 +147,7 @@ def query():
     base = get_base(corpus,n)
     base = base.loc[(base.annee>=int(fr))&(base.annee<=int(to))]
     if corpus=="lemonde_rubriques":
-        base = base.loc[np.isin(base.rubrique,rubrique.split(" "))]
+        if rubrique != "":base = base.loc[np.isin(base.rubrique,rubrique.split(" "))]
         grouping = ["annee"]
         if resolution=="mois":grouping.append("mois")
         if by_rubrique:grouping.append("rubrique")

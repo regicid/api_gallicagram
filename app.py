@@ -122,7 +122,7 @@ def query():
             print('aaa')
         if resolution=="mois" and corpus in corpus_journaliers:
             query = f"SELECT * FROM gram_mois where gram=\"{word}\" and annee between {fr} and {to}"
-    if rubrique is not None:
+    if corpus == "lemonde_rubriques":
         try:
             by_rubrique = eval(args["by_rubrique"])
         except:
@@ -131,7 +131,7 @@ def query():
             query = query = query.replace(",gram",",rubrique,gram")
         if " " in rubrique and len(rubrique.split(' ')) < 8:
             rubrique_condition = f"and rubrique in {tuple(rubrique.split(' '))}"
-        elif len(rubrique.split(' ')) == 8:
+        elif len(rubrique.split(' ')) == 8 or rubrique is None:
             rubrique_condition = ""
         else:
             rubrique_condition = f"and rubrique=\"{rubrique}\""

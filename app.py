@@ -87,7 +87,7 @@ def get_base(corpus,n):
 @app.route("/query")
 def query():
     args = request.args
-    word = args.get("mot")
+    word = args.get("mot").lower()
     try:
         corpus=args["corpus"]
     except:
@@ -162,12 +162,6 @@ def query():
     print(word)
     return db_df.to_csv(index=False) 
 
-@app.route('/greet')
-def say_hello():
-  return 'Hello from Server'
-if __name__ == "__main__":
-    app.run(debug=True)
-
 @app.route('/contain')
 def contain():
     args = request.args
@@ -176,8 +170,8 @@ def contain():
     except:
         corpus="lemonde"
     print(corpus)
-    mot1 = args.get("mot1").replace("'","")
-    mot2 = args.get("mot2").replace("'","")
+    mot1 = args.get("mot1").replace("'","").lower()
+    mot2 = args.get("mot2").replace("'","").lower()
     base = "gram"
     try:
         fr = args["from"]
@@ -247,7 +241,7 @@ def joker():
         n_joker = str(args["n_joker"])
     except:
         n_joker = 50
-    mot = args.get("mot")
+    mot = args.get("mot").lower()
     try:
         n=args["length"]
     except:
@@ -290,7 +284,7 @@ def joker_mois():
         n_joker = str(args["n_joker"])
     except:
         n_joker = 50
-    mot = args.get("mot")
+    mot = args.get("mot").lower()
     try:
         n=args["length"]
     except:
@@ -330,7 +324,7 @@ def associated():
         n_joker = str(args["n_joker"])
     except:
         n_joker = 50
-    mot = args.get("mot")
+    mot = args.get("mot").lower()
     try:
         n=args["length"]
     except:
@@ -377,8 +371,8 @@ def cooccur():
         resolution = args["resolution"]
     except:
         resolution = "jour"
-    mot1 = args.get("mot1").replace("'","").replace(" ","','")
-    mot2 = args.get("mot2").replace("'","").replace(" ","','")
+    mot1 = args.get("mot1").replace("'","").replace(" ","','").lower()
+    mot2 = args.get("mot2").replace("'","").replace(" ","','").lower()
     conn = sqlite3.connect("/opt/bazoulay/ngram/1gram_lemonde_article.db")
     time_steps = "annee"
     if resolution in ["mois","jour"]:time_steps += ",mois"
@@ -420,7 +414,7 @@ def associated_article():
         stopwords = int(args["stopwords"])
     except:
         stopwords = 0
-    mot = args.get("mot")
+    mot = args.get("mot").lower()
     conn = sqlite3.connect("/opt/bazoulay/ngram/1gram_lemonde_article.db")
     query = f"select gram,sum(n) as tot from gram where article_id in (select article_id from gram where gram=\"{mot}\" and annee between {fr} and {to}) group by gram order by tot desc limit {n_joker+stopwords}"
     print(query)
@@ -444,7 +438,7 @@ def query_article():
         to = args["to"]
     except:
         to = 2022
-    mot = args.get("mot")
+    mot = args.get("mot").lower()
     conn = sqlite3.connect("/opt/bazoulay/ngram/1gram_lemonde_article.db")
     query = f"select count(*) as n,gram,annee,mois from gram where gram='{mot}' and annee between {fr} and {to} group by annee,mois"
     db_df = pd.read_sql(query,conn)
@@ -458,7 +452,7 @@ def query_article():
 @app.route("/query_persee")
 def query_persee():
     args = request.args
-    word = args.get("mot")
+    word = args.get("mot").lower()
     try:
         revue = args["revue"]
     except:

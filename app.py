@@ -148,26 +148,23 @@ def process_results(db_df, base, corpus, resolution, rubrique):
             grouping.append("mois")
         if by_rubrique:
             grouping.append("rubrique")
-            # Ensure 'rubrique' column is present in db_df
-            if 'rubrique' not in db_df.columns:
-                db_df['rubrique'] = ''  # or some default value
         
+        # Sum the total for base
         base = base.groupby(grouping).agg({"total": "sum"}).reset_index()
         
-        # Adjust db_df grouping to match base
-        db_df_grouping = grouping + ["gram"]
+        # Merge db_df with base
+        merge_columns = grouping.copy()
+        if "rubrique" not in db_df.columns and "rubrique" in merge_columns:
+            merge_columns.remove("rubrique")
         
-        # Ensure all necessary columns are present in db_df
-        for col in db_df_grouping:
-            if col not in db_df.columns:
-                db_df[col] = ''  # or some appropriate default value
+        db_df = pd.merge(db_df, base, on=merge_columns, how="right")
         
-        db_df = db_df.groupby(db_df_grouping).agg({"n": "sum"}).reset_index()
-        
-        # Merge with base data
-        db_df = pd.merge(db_df, base, on=grouping, how="right")
+        # Fill NaN values
         db_df["n"] = db_df["n"].fillna(0)
         db_df["gram"] = db_df["gram"].fillna(db_df["gram"].iloc[0] if len(db_df) > 0 else "")
+        
+        if by_rubrique and "rubrique" not in db_df.columns:
+            db_df["rubrique"] = base["rubrique"]
         
     elif resolution == "mois" and corpus in ["lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien", "presse"]:
         base = base.groupby(["annee", "mois"]).agg({'total': 'sum'}).reset_index()
@@ -188,6 +185,8 @@ def process_results(db_df, base, corpus, resolution, rubrique):
         db_df = db_df.sort_values("annee")
     
     return db_df
+
+
 
 @app.route("/query")
 def query():

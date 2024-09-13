@@ -138,6 +138,7 @@ def handle_lemonde_rubriques(query, query_params, rubrique, resolution):
 
 def process_results(db_df, base, corpus, resolution, rubrique):
     if corpus == "lemonde_rubriques":
+        print(db_df)
         by_rubrique = request.args.get("by_rubrique", "False").lower() == "true"
         
         if rubrique:

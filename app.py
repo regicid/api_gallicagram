@@ -148,11 +148,20 @@ def process_results(db_df, base, corpus, resolution, rubrique):
             grouping.append("mois")
         if by_rubrique:
             grouping.append("rubrique")
+            # Ensure 'rubrique' column is present in db_df
+            if 'rubrique' not in db_df.columns:
+                db_df['rubrique'] = ''  # or some default value
         
         base = base.groupby(grouping).agg({"total": "sum"}).reset_index()
         
         # Adjust db_df grouping to match base
         db_df_grouping = grouping + ["gram"]
+        
+        # Ensure all necessary columns are present in db_df
+        for col in db_df_grouping:
+            if col not in db_df.columns:
+                db_df[col] = ''  # or some appropriate default value
+        
         db_df = db_df.groupby(db_df_grouping).agg({"n": "sum"}).reset_index()
         
         # Merge with base data
@@ -180,7 +189,6 @@ def process_results(db_df, base, corpus, resolution, rubrique):
     
     return db_df
 
-# Update the main query function to pass the words_input to process_results
 @app.route("/query")
 def query():
     args = request.args

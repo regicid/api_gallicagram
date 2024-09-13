@@ -112,10 +112,8 @@ def build_query(words_to_search, fr, to, corpus, resolution, rubrique):
     return query, query_params
 
 def handle_lemonde_rubriques(query, query_params, rubrique, resolution):
-    print(query)
     by_rubrique = request.args.get("by_rubrique", "False").lower() == "true"
-    if by_rubrique:
-        query = query.replace(",gram", ",rubrique,gram")
+    
     if rubrique:
         rubrique_list = rubrique.split()
         if 1 < len(rubrique_list) < 8:
@@ -128,21 +126,17 @@ def handle_lemonde_rubriques(query, query_params, rubrique, resolution):
             rubrique_condition = ""
         query = query.replace("AND annee BETWEEN", f'{rubrique_condition} AND annee BETWEEN')
     
-    # Manage the SELECT and GROUP BY clauses without duplication
+    # Add rubrique to SELECT and GROUP BY when by_rubrique is True and resolution is "annee"
     if by_rubrique and resolution == "annee":
-        query = query.replace("*", "sum(n) as n, annee, gram, rubrique")
-        if "GROUP BY" in query:
-            query = query.replace("GROUP BY annee, gram", "GROUP BY annee, rubrique, gram")
-        else:
-            query += " GROUP BY annee, rubrique, gram"
-    elif not by_rubrique and resolution == "mois":
-        query = query.replace("*", "sum(n) as n, annee, mois, gram")
-        if "GROUP BY" in query:
-            query = query.replace("GROUP BY annee, gram", "GROUP BY annee, mois, gram")
-        else:
-            query += " GROUP BY annee, mois, gram"
+        query = query.replace("SELECT sum(n) as n, annee, gram", "SELECT sum(n) as n, annee, gram, rubrique")
+        query = query.replace("GROUP BY annee, gram", "GROUP BY annee, gram, rubrique")
+    # Adjust the query for the "mois" resolution
+    elif resolution == "mois":
+        query = query.replace("SELECT sum(n) as n, annee, gram", "SELECT sum(n) as n, annee, mois, gram")
+        query = query.replace("GROUP BY annee, gram", "GROUP BY annee, mois, gram")
     
     return query, query_params
+
 
 
 

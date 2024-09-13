@@ -84,35 +84,6 @@ def get_base(corpus,n):
         base = base.rename(columns={"n":"total"})
     return base
 
-@app.route("/query")
-def query():
-    args = request.args
-    words_input = args.get("mot", "").lower()
-    corpus = args.get("corpus", "presse")
-    fr = args.get("from", 1789)
-    to = args.get("to", 2022)
-    resolution = args.get("resolution", "default")
-    rubrique = args.get("rubrique")
-
-    words_to_search = process_input_words(words_input)
-    n = max(len(word.split()) for word in words_input.split(','))
-    
-    conn = get_db(corpus, n)
-    query, query_params = build_query(words_to_search, fr, to, corpus, resolution, rubrique)
-
-    print(query)
-    print(query_params)
-    db_df = pd.read_sql_query(query, conn, params=query_params)
-    conn.close()
-
-    base = get_base(corpus, n)
-    base = base[(base.annee >= int(fr)) & (base.annee <= int(to))]
-    
-    db_df = process_results(db_df, base, corpus, resolution, rubrique)
-    db_df["gram"] = words_input
-
-    return db_df.to_csv(index=False)
-
 def process_input_words(words_input):
     input_words = [w.strip() for w in words_input.split(',')]
     words_to_search = []
@@ -167,23 +138,78 @@ def handle_lemonde_rubriques(query, query_params, rubrique, resolution):
 
 def process_results(db_df, base, corpus, resolution, rubrique):
     if corpus == "lemonde_rubriques":
+        by_rubrique = request.args.get("by_rubrique", "False").lower() == "true"
+        
         if rubrique:
             base = base[np.isin(base.rubrique, rubrique.split())]
-        grouping = ["annee", "mois" if resolution == "mois" else None, "rubrique" if request.args.get("by_rubrique", "False").lower() == "true" else None]
-        grouping = [g for g in grouping if g is not None]
+        
+        grouping = ["annee"]
+        if resolution == "mois":
+            grouping.append("mois")
+        if by_rubrique:
+            grouping.append("rubrique")
+        
         base = base.groupby(grouping).agg({"total": "sum"}).reset_index()
+        
+        # Adjust db_df grouping to match base
+        db_df_grouping = grouping + ["gram"]
+        db_df = db_df.groupby(db_df_grouping).agg({"n": "sum"}).reset_index()
+        
+        # Merge with base data
+        db_df = pd.merge(db_df, base, on=grouping, how="right")
+        db_df["n"] = db_df["n"].fillna(0)
+        db_df["gram"] = db_df["gram"].fillna(db_df["gram"].iloc[0] if len(db_df) > 0 else "")
+        
     elif resolution == "mois" and corpus in ["lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien", "presse"]:
         base = base.groupby(["annee", "mois"]).agg({'total': 'sum'}).reset_index()
+        db_df = pd.merge(db_df, base, on=["annee", "mois"], how="right")
+        db_df["n"] = db_df["n"].fillna(0)
+        
     elif resolution == "annee" and corpus in ["lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien", "presse"]:
         base = base.groupby(["annee"]).agg({'total': 'sum'}).reset_index()
-
-    db_df = pd.merge(db_df, base, how="right")
-    db_df.n = db_df.n.fillna(0)
+        db_df = pd.merge(db_df, base, on=["annee"], how="right")
+        db_df["n"] = db_df["n"].fillna(0)
+    
+    else:
+        # For other cases, perform a simple right merge
+        db_df = pd.merge(db_df, base, how="right")
+        db_df["n"] = db_df["n"].fillna(0)
     
     if corpus == "livres":
         db_df = db_df.sort_values("annee")
     
     return db_df
+
+# Update the main query function to pass the words_input to process_results
+@app.route("/query")
+def query():
+    args = request.args
+    words_input = args.get("mot", "").lower()
+    corpus = args.get("corpus", "presse")
+    fr = args.get("from", 1789)
+    to = args.get("to", 2022)
+    resolution = args.get("resolution", "default")
+    rubrique = args.get("rubrique")
+
+    words_to_search = process_input_words(words_input)
+    n = max(len(word.split()) for word in words_input.split(','))
+    
+    conn = get_db(corpus, n)
+    query, query_params = build_query(words_to_search, fr, to, corpus, resolution, rubrique)
+
+    print(query)
+    print(query_params)
+    db_df = pd.read_sql_query(query, conn, params=query_params)
+    conn.close()
+
+    base = get_base(corpus, n)
+    base = base[(base.annee >= int(fr)) & (base.annee <= int(to))]
+    
+    db_df = process_results(db_df, base, corpus, resolution, rubrique)
+    
+    # Instead of setting gram column to words_input, we'll ensure it's correctly populated in process_results
+    
+    return db_df.to_csv(index=False)
 
 @app.route('/contain')
 def contain():

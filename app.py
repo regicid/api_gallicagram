@@ -156,7 +156,8 @@ def process_results(db_df, base, corpus, resolution, rubrique):
         if "rubrique" not in db_df.columns and by_rubrique:
             # If rubrique is not in db_df but by_rubrique is True, 
             # we need to add it to properly merge with base
-            db_df = db_df.merge(base[["annee", "mois", "rubrique"]], on=["annee", "mois"], how="right")
+            merge_cols = ["annee", "mois"] if "mois" in base.columns else ["annee"]
+            db_df = db_df.merge(base[merge_cols + ["rubrique"]], on=merge_cols, how="right")
         else:
             # Ensure db_df has all the necessary columns for merging
             for col in grouping:
@@ -181,7 +182,7 @@ def process_results(db_df, base, corpus, resolution, rubrique):
         
     elif resolution == "annee" and corpus in ["lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien", "presse"]:
         base = base.groupby(["annee"]).agg({'total': 'sum'}).reset_index()
-        db_df = pd.merge(db_df, base, on=["annee"], how="outer")
+        db_df = pd_merge(db_df, base, on=["annee"], how="outer")
         db_df["n"] = db_df["n"].fillna(0)
     
     else:

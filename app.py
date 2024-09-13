@@ -112,11 +112,10 @@ def build_query(words_to_search, fr, to, corpus, resolution, rubrique):
     return query, query_params
 
 def handle_lemonde_rubriques(query, query_params, rubrique, resolution):
+    print(query)
     by_rubrique = request.args.get("by_rubrique", "False").lower() == "true"
-    
     if by_rubrique:
         query = query.replace(",gram", ",rubrique,gram")
-    
     if rubrique:
         rubrique_list = rubrique.split()
         if 1 < len(rubrique_list) < 8:
@@ -132,7 +131,6 @@ def handle_lemonde_rubriques(query, query_params, rubrique, resolution):
     # Manage the SELECT and GROUP BY clauses without duplication
     if by_rubrique and resolution == "annee":
         query = query.replace("*", "sum(n) as n, annee, gram, rubrique")
-        # Ensure we don't have duplicate GROUP BY clauses
         if "GROUP BY" in query:
             query = query.replace("GROUP BY annee, gram", "GROUP BY annee, rubrique, gram")
         else:

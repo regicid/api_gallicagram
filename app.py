@@ -152,39 +152,48 @@ def process_results(db_df, base, corpus, resolution, rubrique):
         # Sum the total for base
         base = base.groupby(grouping).agg({"total": "sum"}).reset_index()
         
+        # Prepare db_df
+        if "rubrique" not in db_df.columns and by_rubrique:
+            # If rubrique is not in db_df but by_rubrique is True, 
+            # we need to add it to properly merge with base
+            db_df = db_df.merge(base[["annee", "mois", "rubrique"]], on=["annee", "mois"], how="right")
+        else:
+            # Ensure db_df has all the necessary columns for merging
+            for col in grouping:
+                if col not in db_df.columns:
+                    db_df[col] = None
+
+        # Group db_df to remove potential duplicates
+        db_df = db_df.groupby(grouping + ["gram"]).agg({"n": "sum"}).reset_index()
+
         # Merge db_df with base
-        merge_columns = grouping.copy()
-        if "rubrique" not in db_df.columns and "rubrique" in merge_columns:
-            merge_columns.remove("rubrique")
-        
-        db_df = pd.merge(db_df, base, on=merge_columns, how="right")
+        db_df = pd.merge(db_df, base, on=grouping, how="outer")
         
         # Fill NaN values
         db_df["n"] = db_df["n"].fillna(0)
+        db_df["total"] = db_df["total"].fillna(0)
         db_df["gram"] = db_df["gram"].fillna(db_df["gram"].iloc[0] if len(db_df) > 0 else "")
-        
-        if by_rubrique and "rubrique" not in db_df.columns:
-            db_df["rubrique"] = base["rubrique"]
         
     elif resolution == "mois" and corpus in ["lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien", "presse"]:
         base = base.groupby(["annee", "mois"]).agg({'total': 'sum'}).reset_index()
-        db_df = pd.merge(db_df, base, on=["annee", "mois"], how="right")
+        db_df = pd.merge(db_df, base, on=["annee", "mois"], how="outer")
         db_df["n"] = db_df["n"].fillna(0)
         
     elif resolution == "annee" and corpus in ["lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien", "presse"]:
         base = base.groupby(["annee"]).agg({'total': 'sum'}).reset_index()
-        db_df = pd.merge(db_df, base, on=["annee"], how="right")
+        db_df = pd.merge(db_df, base, on=["annee"], how="outer")
         db_df["n"] = db_df["n"].fillna(0)
     
     else:
-        # For other cases, perform a simple right merge
-        db_df = pd.merge(db_df, base, how="right")
+        # For other cases, perform a simple outer merge
+        db_df = pd.merge(db_df, base, how="outer")
         db_df["n"] = db_df["n"].fillna(0)
     
     if corpus == "livres":
         db_df = db_df.sort_values("annee")
     
     return db_df
+
 
 
 

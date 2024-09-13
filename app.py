@@ -129,21 +129,23 @@ def handle_lemonde_rubriques(query, query_params, rubrique, resolution):
             rubrique_condition = ""
         query = query.replace("AND annee BETWEEN", f'{rubrique_condition} AND annee BETWEEN')
     
-    # Logic to manage grouping without causing duplicate GROUP BY clauses
+    # Manage the SELECT and GROUP BY clauses without duplication
     if by_rubrique and resolution == "annee":
-        query = query.replace("*", "sum(n) as n, annee, rubrique")
+        query = query.replace("*", "sum(n) as n, annee, gram, rubrique")
+        # Ensure we don't have duplicate GROUP BY clauses
         if "GROUP BY" in query:
-            query = query.replace("GROUP BY annee, gram", "GROUP BY annee, rubrique")
+            query = query.replace("GROUP BY annee, gram", "GROUP BY annee, rubrique, gram")
         else:
-            query += " GROUP BY annee, rubrique"
+            query += " GROUP BY annee, rubrique, gram"
     elif not by_rubrique and resolution == "mois":
         query = query.replace("*", "sum(n) as n, annee, mois, gram")
         if "GROUP BY" in query:
-            query = query.replace("GROUP BY annee, gram", "GROUP BY annee, mois")
+            query = query.replace("GROUP BY annee, gram", "GROUP BY annee, mois, gram")
         else:
-            query += " GROUP BY annee, mois"
+            query += " GROUP BY annee, mois, gram"
     
     return query, query_params
+
 
 
 

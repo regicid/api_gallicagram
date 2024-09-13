@@ -129,13 +129,22 @@ def handle_lemonde_rubriques(query, query_params, rubrique, resolution):
             rubrique_condition = ""
         query = query.replace("AND annee BETWEEN", f'{rubrique_condition} AND annee BETWEEN')
     
-    # Ensure rubrique is selected when resolution is 'annee' and by_rubrique is True
+    # Logic to manage grouping without causing duplicate GROUP BY clauses
     if by_rubrique and resolution == "annee":
-        query = query.replace("*", "sum(n) as n, annee, rubrique") + " GROUP BY annee, rubrique"
+        query = query.replace("*", "sum(n) as n, annee, rubrique")
+        if "GROUP BY" in query:
+            query = query.replace("GROUP BY annee, gram", "GROUP BY annee, rubrique")
+        else:
+            query += " GROUP BY annee, rubrique"
     elif not by_rubrique and resolution == "mois":
-        query = query.replace("*", "sum(n) as n, annee, mois, gram") + " GROUP BY annee, mois"
+        query = query.replace("*", "sum(n) as n, annee, mois, gram")
+        if "GROUP BY" in query:
+            query = query.replace("GROUP BY annee, gram", "GROUP BY annee, mois")
+        else:
+            query += " GROUP BY annee, mois"
     
     return query, query_params
+
 
 
 def process_results(db_df, base, corpus, resolution, rubrique):

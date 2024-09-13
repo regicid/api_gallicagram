@@ -87,80 +87,103 @@ def get_base(corpus,n):
 @app.route("/query")
 def query():
     args = request.args
-    word = args.get("mot").lower()
-    try:
-        corpus=args["corpus"]
-    except:
-        corpus="presse"
-    try:
-        fr = args["from"]
-    except:
-        fr=1789
-    try:
-        to = args["to"]
-    except:
-        to = 2022
-    try:
-        resolution = args["resolution"]
-    except:
-        resolution = "default"
-    try:
-        rubrique = args["rubrique"]
-    except:
-        rubrique=None
-    n = len(word.split(" "))
-    conn = get_db(corpus,n)
-    corpus_journaliers = ["lemonde","huma","paris","figaro","moniteur","temps","petit_journal","constitutionnel","journal_des_debats","la_presse","petit_parisien"]
-    if resolution=="default" or resolution=="jour" or corpus=="livres" or (resolution=="mois" and corpus in ["presse","ddb","lemonde_rubriques"]):
-        query = f"SELECT * FROM gram where gram=\"{word}\" and annee between {fr} and {to}"
-    else:
-        if resolution=="annee":
-            base = "gram"
-            if corpus in corpus_journaliers:
-                base="gram_mois"
-            query = f"SELECT sum(n) as n,annee,gram from {base} where gram=\"{word}\" and annee between {fr} and {to} group by annee"
-            print('aaa')
-        if resolution=="mois" and corpus in corpus_journaliers:
-            query = f"SELECT * FROM gram_mois where gram=\"{word}\" and annee between {fr} and {to}"
-    if corpus == "lemonde_rubriques":
-        try:
-            by_rubrique = eval(args["by_rubrique"])
-        except:
-            by_rubrique = False
-        if by_rubrique:
-            query = query = query.replace(",gram",",rubrique,gram")
-        if rubrique is None:rubrique =""
-        if " " in rubrique and len(rubrique.split(' ')) < 8:
-            rubrique_condition = f"and rubrique in {tuple(rubrique.split(' '))}"
-        elif len(rubrique.split(' ')) == 8 or rubrique == "":
-            rubrique_condition = ""
-        else:
-            rubrique_condition = f"and rubrique=\"{rubrique}\""
-        query = query.replace("and annee between",f'{rubrique_condition} and annee between')
-        if by_rubrique and resolution=="annee":
-            query = query.replace(",gram","") + ",rubrique"
-        if not by_rubrique and resolution=="mois":
-            query = query.replace("*","sum(n) as n,annee,mois,gram") + " group by annee,mois"
+    words_input = args.get("mot", "").lower()
+    corpus = args.get("corpus", "presse")
+    fr = args.get("from", 1789)
+    to = args.get("to", 2022)
+    resolution = args.get("resolution", "default")
+    rubrique = args.get("rubrique")
+
+    words_to_search = process_input_words(words_input)
+    n = max(len(word.split()) for word in words_input.split(','))
+    
+    conn = get_db(corpus, n)
+    query, query_params = build_query(words_to_search, fr, to, corpus, resolution, rubrique)
+
     print(query)
-    db_df = pd.read_sql_query(query,conn)
+    print(query_params)
+    db_df = pd.read_sql_query(query, conn, params=query_params)
     conn.close()
-    base = get_base(corpus,n)
-    base = base.loc[(base.annee>=int(fr))&(base.annee<=int(to))]
-    if corpus=="lemonde_rubriques":
-        if rubrique != "":base = base.loc[np.isin(base.rubrique,rubrique.split(" "))]
-        grouping = ["annee"]
-        if resolution=="mois":grouping.append("mois")
-        if by_rubrique:grouping.append("rubrique")
-        print(grouping)
-        base = base.groupby(grouping).agg({"total":"sum"}).reset_index()
-    if resolution=="mois" and corpus in corpus_journaliers + ["presse"]:base = base.groupby(["annee","mois"]).agg({'total':'sum'}).reset_index()
-    if resolution=="annee" and corpus in corpus_journaliers + ["presse"]:base = base.groupby(["annee"]).agg({'total':'sum'}).reset_index()
-    db_df = pd.merge(db_df,base,how="right")
+
+    base = get_base(corpus, n)
+    base = base[(base.annee >= int(fr)) & (base.annee <= int(to))]
+    
+    db_df = process_results(db_df, base, corpus, resolution, rubrique)
+    db_df["gram"] = words_input
+
+    return db_df.to_csv(index=False)
+
+def process_input_words(words_input):
+    input_words = [w.strip() for w in words_input.split(',')]
+    words_to_search = []
+    vowels = 'aeiouàâéèêëîïôùûü'
+    for word in input_words:
+        words_to_search.append(word)
+        if word[0].lower() in vowels:
+            words_to_search.append(f"l'{word}")
+    return words_to_search
+
+def build_query(words_to_search, fr, to, corpus, resolution, rubrique):
+    placeholder = ','.join(['?'] * len(words_to_search))
+    query_params = words_to_search + [fr, to]
+
+    if resolution == "default" or resolution == "jour" or corpus == "livres" or (resolution == "mois" and corpus in ["presse", "ddb", "lemonde_rubriques"]):
+        query = f"SELECT * FROM gram WHERE gram IN ({placeholder}) AND annee BETWEEN ? AND ?"
+    elif resolution == "annee":
+        base = "gram_mois" if corpus in ["lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien"] else "gram"
+        query = f"SELECT sum(n) as n, annee, gram FROM {base} WHERE gram IN ({placeholder}) AND annee BETWEEN ? AND ? GROUP BY annee, gram"
+    elif resolution == "mois" and corpus in ["lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien"]:
+        query = f"SELECT * FROM gram_mois WHERE gram IN ({placeholder}) AND annee BETWEEN ? AND ?"
+
+    if corpus == "lemonde_rubriques":
+        query, query_params = handle_lemonde_rubriques(query, query_params, rubrique, resolution)
+
+    return query, query_params
+
+def handle_lemonde_rubriques(query, query_params, rubrique, resolution):
+    by_rubrique = request.args.get("by_rubrique", "False").lower() == "true"
+    
+    if by_rubrique:
+        query = query.replace(",gram", ",rubrique,gram")
+    
+    if rubrique:
+        rubrique_list = rubrique.split()
+        if 1 < len(rubrique_list) < 8:
+            rubrique_condition = f"AND rubrique IN ({','.join(['?'] * len(rubrique_list))})"
+            query_params = query_params[:-2] + rubrique_list + query_params[-2:]
+        elif len(rubrique_list) != 8:
+            rubrique_condition = "AND rubrique = ?"
+            query_params = query_params[:-2] + [rubrique] + query_params[-2:]
+        else:
+            rubrique_condition = ""
+        query = query.replace("AND annee BETWEEN", f'{rubrique_condition} AND annee BETWEEN')
+    
+    if by_rubrique and resolution == "annee":
+        query = query.replace(",gram", "") + ",rubrique"
+    elif not by_rubrique and resolution == "mois":
+        query = query.replace("*", "sum(n) as n,annee,mois,gram") + " GROUP BY annee,mois"
+    
+    return query, query_params
+
+def process_results(db_df, base, corpus, resolution, rubrique):
+    if corpus == "lemonde_rubriques":
+        if rubrique:
+            base = base[np.isin(base.rubrique, rubrique.split())]
+        grouping = ["annee", "mois" if resolution == "mois" else None, "rubrique" if request.args.get("by_rubrique", "False").lower() == "true" else None]
+        grouping = [g for g in grouping if g is not None]
+        base = base.groupby(grouping).agg({"total": "sum"}).reset_index()
+    elif resolution == "mois" and corpus in ["lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien", "presse"]:
+        base = base.groupby(["annee", "mois"]).agg({'total': 'sum'}).reset_index()
+    elif resolution == "annee" and corpus in ["lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien", "presse"]:
+        base = base.groupby(["annee"]).agg({'total': 'sum'}).reset_index()
+
+    db_df = pd.merge(db_df, base, how="right")
     db_df.n = db_df.n.fillna(0)
-    db_df["gram"] = word
-    if corpus=="livres":db_df = db_df.sort_values("annee")
-    print(word)
-    return db_df.to_csv(index=False) 
+    
+    if corpus == "livres":
+        db_df = db_df.sort_values("annee")
+    
+    return db_df
 
 @app.route('/contain')
 def contain():

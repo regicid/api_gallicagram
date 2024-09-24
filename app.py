@@ -188,7 +188,7 @@ def process_results(db_df, base, corpus, resolution, rubrique):
         
     elif resolution == "annee" and corpus in ["lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien", "presse"]:
         base = base.groupby(["annee"]).agg({'total': 'sum'}).reset_index()
-        db_df = pd_merge(db_df, base, on=["annee"], how="outer")
+        db_df = pd.merge(db_df, base, on=["annee"], how="outer")
         db_df["n"] = db_df["n"].fillna(0)
     
     else:

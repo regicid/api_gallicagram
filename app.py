@@ -219,7 +219,7 @@ def query():
     
     conn = get_db(corpus, n)
     query, query_params = build_query(words_to_search, fr, to, corpus, resolution, rubrique)
-
+    print(conn)
     print(query)
     print(query_params)
     db_df = pd.read_sql_query(query, conn, params=query_params)

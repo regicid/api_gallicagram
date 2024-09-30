@@ -224,7 +224,7 @@ def query():
     print(query_params)
     db_df = pd.read_sql_query(query, conn, params=query_params)
     conn.close()
-
+    print(db_df)
     base = get_base(corpus, n)
     base = base[(base.annee >= int(fr)) & (base.annee <= int(to))]
     

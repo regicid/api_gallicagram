@@ -40,6 +40,7 @@ def get_db(corpus,n):
     if db is None:
         db = g._database = sqlite3.connect(DATABASE,detect_types=sqlite3.PARSE_COLNAMES)
     db.row_factory = sqlite3.Row
+    print(DATABASE)
     return db
 def get_base(corpus,n):
     if corpus == "lemonde":
@@ -97,7 +98,6 @@ def process_input_words(words_input):
 def build_query(words_to_search, fr, to, corpus, resolution, rubrique):
     placeholder = ','.join(['?'] * len(words_to_search))
     query_params = words_to_search + [fr, to]
-
     if resolution == "default" or resolution == "jour" or corpus == "livres" or (resolution == "mois" and corpus in ["presse", "ddb", "lemonde_rubriques"]):
         query = f"SELECT * FROM gram WHERE gram IN ({placeholder}) AND annee BETWEEN ? AND ?"
     elif resolution == "annee":
@@ -105,15 +105,12 @@ def build_query(words_to_search, fr, to, corpus, resolution, rubrique):
         query = f"SELECT sum(n) as n, annee, gram FROM {base} WHERE gram IN ({placeholder}) AND annee BETWEEN ? AND ? GROUP BY annee, gram"
     elif resolution == "mois" and corpus in ["lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien"]:
         query = f"SELECT * FROM gram_mois WHERE gram IN ({placeholder}) AND annee BETWEEN ? AND ?"
-
     if corpus == "lemonde_rubriques":
         query, query_params = handle_lemonde_rubriques(query, query_params, rubrique, resolution)
-
     return query, query_params
 
 def handle_lemonde_rubriques(query, query_params, rubrique, resolution):
     by_rubrique = request.args.get("by_rubrique", "False").lower() == "true"
-    
     if rubrique:
         rubrique_list = rubrique.split()
         if 1 < len(rubrique_list) < 8:
@@ -144,20 +141,16 @@ def handle_lemonde_rubriques(query, query_params, rubrique, resolution):
 def process_results(db_df, base, corpus, resolution, rubrique):
     if corpus == "lemonde_rubriques":
         print(db_df)
-        by_rubrique = request.args.get("by_rubrique", "False").lower() == "true"
-        
+        by_rubrique = request.args.get("by_rubrique", "False").lower() == "true"   
         if rubrique:
-            base = base[np.isin(base.rubrique, rubrique.split())]
-        
+            base = base[np.isin(base.rubrique, rubrique.split())] 
         grouping = ["annee"]
         if resolution == "mois":
             grouping.append("mois")
         if by_rubrique:
             grouping.append("rubrique")
-        
         # Sum the total for base
-        base = base.groupby(grouping).agg({"total": "sum"}).reset_index()
-        
+        base = base.groupby(grouping).agg({"total": "sum"}).reset_index()       
         # Prepare db_df
         if "rubrique" not in db_df.columns and by_rubrique:
             # If rubrique is not in db_df but by_rubrique is True, 
@@ -169,36 +162,28 @@ def process_results(db_df, base, corpus, resolution, rubrique):
             for col in grouping:
                 if col not in db_df.columns:
                     db_df[col] = None
-
         # Group db_df to remove potential duplicates
         db_df = db_df.groupby(grouping + ["gram"]).agg({"n": "sum"}).reset_index()
-
         # Merge db_df with base
         db_df = pd.merge(db_df, base, on=grouping, how="outer")
-        
         # Fill NaN values
         db_df["n"] = db_df["n"].fillna(0)
         db_df["total"] = db_df["total"].fillna(0)
-        db_df["gram"] = db_df["gram"].fillna(db_df["gram"].iloc[0] if len(db_df) > 0 else "")
-        
+        db_df["gram"] = db_df["gram"].fillna(db_df["gram"].iloc[0] if len(db_df) > 0 else "") 
     elif resolution == "mois" and corpus in ["lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien", "presse"]:
         base = base.groupby(["annee", "mois"]).agg({'total': 'sum'}).reset_index()
         db_df = pd.merge(db_df, base, on=["annee", "mois"], how="outer")
         db_df["n"] = db_df["n"].fillna(0)
-        
     elif resolution == "annee" and corpus in ["lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien", "presse"]:
         base = base.groupby(["annee"]).agg({'total': 'sum'}).reset_index()
         db_df = pd.merge(db_df, base, on=["annee"], how="outer")
         db_df["n"] = db_df["n"].fillna(0)
-    
     else:
         # For other cases, perform a simple outer merge
         db_df = pd.merge(db_df, base, how="outer")
         db_df["n"] = db_df["n"].fillna(0)
-    
     if corpus == "livres":
         db_df = db_df.sort_values("annee")
-    
     return db_df
 
 
@@ -213,13 +198,10 @@ def query():
     to = args.get("to", 2022)
     resolution = args.get("resolution", "default")
     rubrique = args.get("rubrique")
-
     words_to_search = process_input_words(words_input)
     n = max(len(word.split()) for word in words_input.split(','))
-    
     conn = get_db(corpus, n)
     query, query_params = build_query(words_to_search, fr, to, corpus, resolution, rubrique)
-    print(conn)
     print(query)
     print(query_params)
     db_df = pd.read_sql_query(query, conn, params=query_params)
@@ -227,11 +209,8 @@ def query():
     print(db_df)
     base = get_base(corpus, n)
     base = base[(base.annee >= int(fr)) & (base.annee <= int(to))]
-    
     db_df = process_results(db_df, base, corpus, resolution, rubrique)
-    
     # Instead of setting gram column to words_input, we'll ensure it's correctly populated in process_results
-    
     return db_df.to_csv(index=False)
 
 @app.route('/contain')

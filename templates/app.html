@@ -81,7 +81,7 @@
                             throw new Error('Canvas context not available');
                         }
 
-                        myChart = new Chart(ctx, {
+                        myChart = new window.Chart(ctx, {
                             type: 'bar',  
                             data: {
                                 labels: verbs,

@@ -1,134 +1,78 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Flask App</title>
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analysis Form</title>
+    <!-- Include Chart.js from CDN -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-       .container { 
-            max-width: 800px; 
-            margin: 0 auto; 
-            padding: 20px;
-        }
-       .form-group {
-            margin-bottom: 15px;
-        }
-       .chart-container {
-            margin-top: 20px;
-            height: 400px;
-        }
-    </style>
+    <!-- Optional: Bootstrap CSS for styling (optional) -->
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
 </head>
 <body>
-    <div class="container">
-        <h1>Data Processing Form</h1>
+    <div class="container mt-5">
+        <h1>Analysis Form</h1>
         <form id="analysisForm" action="/guni/app" method="POST" hx-post="/guni/app" hx-target="#results-container">
             <div class="form-group">
                 <label for="speaker_1">Speaker 1:</label>
-                <input type="text" id="speaker_1" name="speaker_1">
+                <input type="text" id="speaker_1" name="speaker_1" class="form-control">
             </div>
             <div class="form-group">
                 <label for="speaker_2">Speaker 2:</label>
-                <input type="text" id="speaker_2" name="speaker_2">
+                <input type="text" id="speaker_2" name="speaker_2" class="form-control">
             </div>
             <div class="form-group">
                 <label for="beginning">From:</label>
-                <input type="number" id="beginning" name="beginning">
+                <input type="number" id="beginning" name="beginning" class="form-control">
             </div>
             <div class="form-group">
                 <label for="end">To:</label>
-                <input type="number" id="end" name="end">
+                <input type="number" id="end" name="end" class="form-control">
             </div>
-            <button type="submit">Run Analysis</button>
+            <button type="submit" class="btn btn-primary">Run Analysis</button>
         </form>
-        <div id="results-container">
-            <div class="chart-container">
-                <canvas id="myChart"></canvas>
-            </div>
+
+        <div id="results-container" class="mt-5">
+            <canvas id="myChart" width="400" height="200"></canvas>
         </div>
     </div>
+
     <script>
-        let myChart = null;
+        document.getElementById('analysisForm').addEventListener('submit', function(event) {
+            event.preventDefault(); // Prevent the default form submission
 
-        document.addEventListener('DOMContentLoaded', function() {
-            document.body.addEventListener('htmx:afterProcess', function(event) {
-                if (event.detail.xhr && event.detail.xhr.response) {
-                    try {
-                        const response = JSON.parse(event.detail.xhr.response);
-                        console.log('Response:', response);
-                        
-                        // Directly access verbs and odd_ratios from the response
-                        const verbs = response.verbs;
-                        const odd_ratios = response.odd_ratios;
-
-                        if (!verbs ||!odd_ratios) {
-                            throw new Error('Response does not contain expected properties');
-                        }
-
-                        if (myChart) {
-                            myChart.destroy();
-                        }
-
-                        // Check if the canvas element is present
-                        const canvasElement = document.getElementById('myChart');
-                        if (!canvasElement) {
-                            console.error('Canvas element with id "myChart" not found in the DOM');
-                            throw new Error('Canvas element with id "myChart" not found');
-                        }
-
-                        const ctx = canvasElement.getContext('2d');
-                        if (!ctx) {
-                            throw new Error('Canvas context not available');
-                        }
-
-                        myChart = new Chart(ctx, {
-                            type: 'bar',  
-                            data: {
-                                labels: verbs,
-                                datasets: [{
-                                    label: 'Odd Ratios',
-                                    data: odd_ratios,
-                                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                                    borderColor: 'rgba(75, 192, 192, 1)',
-                                    borderWidth: 1
-                                }]
-                            },
-                            options: {
-                                indexAxis: 'y',  
-                                responsive: true,
-                                maintainAspectRatio: false,
-                                scales: {
-                                    x: {
-                                        beginAtZero: true,
-                                        title: {
-                                            display: true,
-                                            text: 'Odd Ratios'
-                                        }
-                                    },
-                                    y: {
-                                        title: {
-                                            display: true,
-                                            text: 'Verbs'
-                                        }
-                                    }
-                                },
-                                plugins: {
-                                    legend: {
-                                        position: 'top',
-                                    }, 
-                                    title: {
-                                        display: true,
-                                        text: 'Verb Odd Ratios Analysis'
-                                    }
+            const formData = new FormData(this);
+            fetch('/guni/app', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                const ctx = document.getElementById('myChart').getContext('2d');
+                const myChart = new Chart(ctx, {
+                    type: 'horizontalBar',
+                    data: {
+                        labels: data.verbs,
+                        datasets: [{
+                            label: 'Odd Ratios',
+                            data: data.odd_ratios,
+                            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                            borderColor: 'rgba(75, 192, 192, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        scales: {
+                            xAxes: [{
+                                ticks: {
+                                    beginAtZero: true
                                 }
-                            }
-                        });
-                    } catch (error) {
-                        console.error('Error creating chart:', error);
-                        document.getElementById('results-container').textContent = 'Error creating chart. Please check the console for details.';
+                            }]
+                        }
                     }
-                }
-            });
+                });
+            })
+            .catch(error => console.error('Error:', error));
         });
     </script>
 </body>

@@ -7,6 +7,7 @@ import sqlite3
 import pandas as pd
 import numpy as np
 import re
+import json
 from waitress import serve
 from functools import lru_cache
 app = Flask(__name__)
@@ -625,6 +626,41 @@ def web_interface():
     return render_template('app.html')
 
 def process_data(speaker_1, speaker_2, verbs_1, verbs_2):
-    # Your computation logic here
-    # Return both text result and numerical data
+    verbs_1 = []
+    verbs_2 = []
+    speaker_1 = "Mickaël"
+    speaker_2 = "Guillaume"
+    start = 1993
+    end = 2024
+    cues = pd.read_csv("https://raw.githubusercontent.com/gillesbastin/old_fashion_nlp/refs/heads/main/cues_all.csv").iloc[:,:2]
+    verbs = cues.lemmatized_cue.unique()
+
+    for year in np.arange(start,end+1):
+    for month in range(12):
+        month = month+1
+        try:
+            files = os.listdir(f"/opt/bazoulay/quotes/quotes_{year}_{month}")
+        except:
+            continue
+        genderized_files = [f for f in files if f.endswith("genderized.json")]
+        for i in range(len(genderized_files)):
+            with open(f"quotes_{year}_{month}/{genderized_files[i]}","r") as f:
+                a = json.load(f)
+            for z in a:
+                if speaker_1 in z["speaker"]:
+                    verbs_1.append(z["verb"])
+                if speaker_2 in z["speaker"]:
+                    verbs_2.append(z["verb"])
+        print(month)
+    print(year)
+    verbs_1 = pd.DataFrame(verbs_1,columns = ["cue"])
+    verbs_2 = pd.DataFrame(verbs_2,columns = ["cue"])
+    verbs_1= verbs_1.merge(cues,on="cue").lemmatized_cue.value_counts().reindex(verbs,fill_value=0)
+    verbs_2 = verbs_2.merge(cues,on="cue").lemmatized_cue.value_counts().reindex(verbs,fill_value=0)
+
+    odds_ratio = np.log2((verbs_1/verbs_1.sum())/(verbs_2/verbs_2.sum()))
+    z = verbs_1 + verbs_2 > 25
+    o = odds_ratio.loc[z].sort_values()
+    o = pd.concat([o.head(10), o.tail(10)])
+    print(o)
     return "Processing completed!", [1, 2, 3, 4, 5] 

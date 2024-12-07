@@ -1,73 +1,96 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Flask Form + Chart</title>
-  
-  <!-- Load Chart.js -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <title>Flask App</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .container { 
+            max-width: 800px; 
+            margin: 0 auto; 
+            padding: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .chart-container {
+            margin-top: 20px;
+            height: 400px;
+        }
+    </style>
 </head>
 <body>
-  <h1>Enter a Parameter</h1>
-  <form action="/process" method="POST">
-    <label for="end">Number:</label>
-    <input type="number" id="end" name="end" required>
-    <button type="submit">Submit</button>
-  </form>
+    <div class="container">
+        <h1>Data Processing Form</h1>
+        <form id="analysisForm" action="/guni/app" method="POST" hx-post="/guni/app" hx-target="#results-container">
+            <div class="form-group">
+                <label for="speaker_1">Speaker 1:</label>
+                <input type="text" id="speaker_1" name="speaker_1">
+            </div>
 
-  <div id="json-container">
-    <h3>JSON Data Below:</h3>
-    <pre id="json-data"></pre>
-  </div>
+            <div class="form-group">
+                <label for="speaker_2">Speaker 2:</label>
+                <input type="text" id="speaker_2" name="speaker_2">
+            </div>
 
-  <!-- Canvas for rendering Chart.js -->
-  <canvas id="myChart" width="400" height="200"></canvas>
+            <div class="form-group">
+                <label for="beginning">From:</label>
+                <input type="number" id="beginning" name="beginning">
+            </div>
 
-  <!-- JavaScript Section -->
-  <script>
-    let chart;
+            <div class="form-group">
+                <label for="end">To:</label>
+                <input type="number" id="end" name="end">
+            </div>
 
-    function renderChart(data) {
-      const ctx = document.getElementById('myChart').getContext('2d');
-      
-      if (chart) {
-        chart.destroy();
-      }
+            <button type="submit">Run Analysis</button>
+        </form>
 
-      chart = new Chart(ctx, {
-        type: 'line', // Change chart type as needed
-        data: {
-          labels: data.labels,
-          datasets: [{
-            label: "Odd Ratios",
-            data: data.odd_ratios,
-            borderColor: 'rgba(75, 192, 192, 1)',
-            borderWidth: 2,
-            fill: false
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false
-        }
-      });
-    }
+        <div id="results-container">
+            <div class="chart-container">
+                <canvas id="myChart"></canvas>
+            </div>
+        </div>
+    </div>
 
-    // Fetch JSON from server response after submission
-    window.onload = function() {
-      const jsonContainer = document.getElementById('json-data');
-      fetch('/get_data')
-        .then(response => response.json())
-        .then(data => {
-          jsonContainer.innerText = JSON.stringify(data, null, 2); // Display JSON below the form
-          renderChart({
-            odd_ratios: data.odd_ratios,
-            labels: Array.from({ length: data.odd_ratios.length }, (_, i) => i + 1)
-          });
-        })
-        .catch(error => console.error("Error loading JSON data:", error));
-    };
-  </script>
+    <script>
+        let myChart = null;
+
+        document.body.addEventListener('htmx:afterOnLoad', function(evt) {
+            const response = JSON.parse(evt.detail.xhr.response);
+
+            const verbs = response.data.verbs;
+            const odd_ratios = response.data.odds_ratios;
+
+            if (myChart) {
+                myChart.destroy();
+            }
+
+            const ctx = document.getElementById('myChart').getContext('2d');
+            myChart = new Chart(ctx, {
+                type: 'horizontalBar',
+                data: {
+                    labels: verbs,
+                    datasets: [{
+                        label: 'Odd Ratios',
+                        data: odd_ratios,
+                        backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        });
+    </script>
 </body>
 </html>

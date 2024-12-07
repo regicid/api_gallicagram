@@ -612,8 +612,8 @@ def web_interface():
         # Get form data
         speaker_1 = request.form.get('speaker_1')
         speaker_2 = request.form.get('speaker_2')
-        verbs_1 = request.form.get('verbs_1')
-        verbs_2 = request.form.get('verbs_2')
+        beginning = request.form.get('beginning')
+        end = request.form.get('end')
         
         # Process data
         result, data = process_data(speaker_1, speaker_2, verbs_1, verbs_2)
@@ -625,17 +625,13 @@ def web_interface():
     
     return render_template('app.html')
 
-def process_data(speaker_1, speaker_2, verbs_1, verbs_2):
+def process_data(speaker_1, speaker_2, beginning, end):
     verbs_1 = []
     verbs_2 = []
-    speaker_1 = "Mickaël"
-    speaker_2 = "Guillaume"
-    start = 1993
-    end = 2024
     cues = pd.read_csv("https://raw.githubusercontent.com/gillesbastin/old_fashion_nlp/refs/heads/main/cues_all.csv").iloc[:,:2]
     verbs = cues.lemmatized_cue.unique()
 
-    for year in np.arange(start,end+1):
+    for year in np.arange(beginning,end+1):
         for month in range(12):
             month = month+1
             try:

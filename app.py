@@ -640,7 +640,7 @@ def process_data(speaker_1, speaker_2, beginning, end):
                 continue
             genderized_files = [f for f in files if f.endswith("genderized.json")]
             for i in range(len(genderized_files)):
-                with open(f"quotes_{year}_{month}/{genderized_files[i]}","r") as f:
+                with open(f"/opt/bazoulay/quotes/quotes_{year}_{month}/{genderized_files[i]}","r") as f:
                     a = json.load(f)
                 for z in a:
                     if speaker_1 in z["speaker"]:

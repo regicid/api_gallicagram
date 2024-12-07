@@ -4,15 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Analysis Form</title>
-    <!-- Include Chart.js from CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Include Plotly.js from CDN -->
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <!-- Optional: Bootstrap CSS for styling (optional) -->
     <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
 </head>
 <body>
     <div class="container mt-5">
         <h1>Analysis Form</h1>
-        <form id="analysisForm" action="/guni/app" method="POST" hx-post="/guni/app" hx-target="#results-container">
+        <form id="analysisForm" action="/guni/app" method="POST">
             <div class="form-group">
                 <label for="speaker_1">Speaker 1:</label>
                 <input type="text" id="speaker_1" name="speaker_1" class="form-control">
@@ -33,7 +33,7 @@
         </form>
 
         <div id="results-container" class="mt-5">
-            <canvas id="myChart" width="400" height="200"></canvas>
+            <div id="myChart" style="width:100%;height:500px;"></div>
         </div>
     </div>
 
@@ -48,29 +48,34 @@
             })
             .then(response => response.json())
             .then(data => {
-                const ctx = document.getElementById('myChart').getContext('2d');
-                const myChart = new Chart(ctx, {
-                    type: 'horizontalBar',
-                    data: {
-                        labels: data.verbs,
-                        datasets: [{
-                            label: 'Odd Ratios',
-                            data: data.odd_ratios,
-                            backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                            borderColor: 'rgba(75, 192, 192, 1)',
-                            borderWidth: 1
-                        }]
-                    },
-                    options: {
-                        scales: {
-                            xAxes: [{
-                                ticks: {
-                                    beginAtZero: true
-                                }
-                            }]
+                const verbs = data.verbs;
+                const odd_ratios = data.odd_ratios;
+
+                const trace = {
+                    x: odd_ratios,
+                    y: verbs,
+                    type: 'bar',
+                    orientation: 'h',
+                    marker: {
+                        color: 'rgba(75, 192, 192, 0.6)',
+                        line: {
+                            color: 'rgba(75, 192, 192, 1.0)',
+                            width: 2
                         }
                     }
-                });
+                };
+
+                const layout = {
+                    title: 'Odd Ratios for Verbs',
+                    xaxis: {
+                        title: 'Odd Ratios'
+                    },
+                    yaxis: {
+                        title: 'Verbs'
+                    }
+                };
+
+                Plotly.newPlot('myChart', [trace], layout);
             })
             .catch(error => console.error('Error:', error));
         });

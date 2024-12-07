@@ -606,7 +606,7 @@ def semantic_search_rap():
     result_indices = search(query_embedding,k = k)
     return render_template('index.html', tables=[corpus_faiss.loc[result_indices].to_html(classes='data')], titles=corpus_faiss.columns.values)
 
-@app.route('/app')
+@app.route('/app',methods=['GET', 'POST'])
 def web_interface():
     if request.method == 'POST':
         # Get form data

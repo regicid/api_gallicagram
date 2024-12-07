@@ -659,5 +659,4 @@ def process_data(speaker_1, speaker_2, beginning, end):
     z = np.logical_and(verbs_1 + verbs_2 > 25,z)
     o = odds_ratio.loc[z].sort_values()
     o = pd.concat([o.head(10), o.tail(10)])
-    print(o)
     return o.index, o.values

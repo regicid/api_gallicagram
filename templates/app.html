@@ -1,4 +1,3 @@
-<!-- templates/app.html -->
 <!DOCTYPE html>
 <html>
 <head>
@@ -14,29 +13,6 @@
         .form-group {
             margin-bottom: 15px;
         }
-        .form-group label {
-            display: block;
-            margin-bottom: 5px;
-        }
-        .form-group input {
-            width: 100%;
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-        }
-        .result {
-            margin-top: 20px;
-            padding: 15px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-        }
-        .loading {
-            display: none;
-            margin: 20px 0;
-        }
-        .htmx-request .loading {
-            display: block;
-        }
         .chart-container {
             margin-top: 20px;
             height: 400px;
@@ -46,7 +22,7 @@
 <body>
     <div class="container">
         <h1>Data Processing Form</h1>
-        <form id="analysisForm" action="/guni/app" method="POST">
+        <form id="analysisForm" action="/guni/app" method="POST" hx-post="/guni/app" hx-target="#results-container">
             <div class="form-group">
                 <label for="speaker_1">Speaker 1:</label>
                 <input type="text" id="speaker_1" name="speaker_1">
@@ -70,12 +46,7 @@
             <button type="submit">Run Analysis</button>
         </form>
 
-        <div class="loading">
-            Processing... Please wait...
-        </div>
-
         <div id="results-container">
-            <div id="result" class="result"></div>
             <div class="chart-container">
                 <canvas id="myChart"></canvas>
             </div>
@@ -87,30 +58,33 @@
 
         document.body.addEventListener('htmx:afterOnLoad', function(evt) {
             const response = JSON.parse(evt.detail.xhr.response);
-            document.getElementById('result').innerText = response.result;
-            
-            // Update chart
+
+            const verbs = response.data.verbs;
+            const odd_ratios = response.data.odds_ratios;
+
             if (myChart) {
                 myChart.destroy();
             }
-            
+
             const ctx = document.getElementById('myChart').getContext('2d');
             myChart = new Chart(ctx, {
-                type: 'line',  // or 'bar', 'scatter', etc.
+                type: 'horizontalBar',
                 data: {
-                    labels: Array.from({length: response.data.length}, (_, i) => i + 1),
+                    labels: verbs,
                     datasets: [{
-                        label: 'Analysis Results',
-                        data: response.data,
-                        borderColor: 'rgb(75, 192, 192)',
-                        tension: 0.1
+                        label: 'Odd Ratios',
+                        data: odd_ratios,
+                        backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        borderWidth: 1
                     }]
                 },
                 options: {
+                    indexAxis: 'y',
                     responsive: true,
                     maintainAspectRatio: false,
                     scales: {
-                        y: {
+                        x: {
                             beginAtZero: true
                         }
                     }

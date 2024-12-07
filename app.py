@@ -608,6 +608,7 @@ def semantic_search_rap():
 
 @app.route('/app',methods=['GET', 'POST'])
 def web_interface():
+    print("Request received:", request.method)
     if request.method == 'POST':
         # Get form data
         speaker_1 = request.form.get('speaker_1')

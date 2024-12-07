@@ -68,11 +68,7 @@
             <input type="number" id="end" name="end">
         </div>
         
-        <button hx-post="/app"
-                hx-include="[name='speaker_1'],[name='speaker_2'],[name='beginning'],[name='end']"
-                hx-target="#results-container">
-            Run Analysis
-        </button>
+        <button type="submit">Run Analysis</button>
 
         <div class="loading">
             Processing... Please wait...

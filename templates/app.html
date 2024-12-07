@@ -50,6 +50,7 @@
             .then(data => {
                 const verbs = data.verbs;
                 const odd_ratios = data.odd_ratios;
+                const variances = data.variances; // Variance values to use for error bars
 
                 const trace = {
                     x: odd_ratios,
@@ -62,6 +63,12 @@
                             color: 'rgba(75, 192, 192, 1.0)',
                             width: 2
                         }
+                    }
+                    
+                    error_x: {
+                        type: 'data', // Set type as 'data' to use data for error values
+                        array: variances, // Use variance values directly
+                        visible: true // Ensure the error bars are visible
                     }
                 };
 

@@ -617,11 +617,12 @@ def web_interface():
         end = int(request.form.get('end'))
         print(speaker_1)
         # Process data
-        verbs, odd_ratios = process_data(speaker_1, speaker_2, beginning, end)
+        verbs, odd_ratios,variance = process_data(speaker_1, speaker_2, beginning, end)
         
         return jsonify({
             "verbs": list(verbs),
             "odd_ratios": list(odd_ratios)  # This will be your list of numbers
+            "variance":list(variance)
         })
     
     return render_template('app.html')
@@ -653,11 +654,11 @@ def process_data(speaker_1, speaker_2, beginning, end):
     verbs_2 = pd.DataFrame(verbs_2,columns = ["cue"])
     verbs_1= verbs_1.merge(cues,on="cue").lemmatized_cue.value_counts().reindex(verbs,fill_value=0)
     verbs_2 = verbs_2.merge(cues,on="cue").lemmatized_cue.value_counts().reindex(verbs,fill_value=0)
-
     odds_ratio = np.log2((verbs_1/verbs_1.sum())/(verbs_2/verbs_2.sum()))
+    variance = 1/verbs_1 + 1/verbs_2
     z = np.logical_and(verbs_1 > 0, verbs_2 > 0)
     z = np.logical_and(verbs_1 + verbs_2 > 25,z)
     o = odds_ratio.loc[z].sort_values()
-    o = pd.concat([o.head(10), o.tail(10)])
+    o = pd.concat([o.head(10), o.tail(10)]).unique()
     print(o)
-    return o.index, o.values
+    return o.index, o.values, variance[o.index].values

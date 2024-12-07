@@ -69,9 +69,16 @@
                         myChart.destroy();
                     }
 
-                    const ctx = document.getElementById('myChart').getContext('2d');
-                    if (!ctx) {
+                    // Check if the canvas element is present
+                    const canvasElement = document.getElementById('myChart');
+                    if (!canvasElement) {
+                        console.error('Canvas element with id "myChart" not found in the DOM');
                         throw new Error('Canvas element with id "myChart" not found');
+                    }
+
+                    const ctx = canvasElement.getContext('2d');
+                    if (!ctx) {
+                        throw new Error('Canvas context not available');
                     }
 
                     myChart = new Chart(ctx, {

@@ -616,7 +616,7 @@ def web_interface():
         end = request.form.get('end')
         
         # Process data
-        result, data = process_data(speaker_1, speaker_2, verbs_1, verbs_2)
+        result, data = process_data(speaker_1, speaker_2, beginning, end)
         
         return jsonify({
             "result": result,
@@ -630,7 +630,6 @@ def process_data(speaker_1, speaker_2, beginning, end):
     verbs_2 = []
     cues = pd.read_csv("https://raw.githubusercontent.com/gillesbastin/old_fashion_nlp/refs/heads/main/cues_all.csv").iloc[:,:2]
     verbs = cues.lemmatized_cue.unique()
-
     for year in np.arange(beginning,end+1):
         for month in range(12):
             month = month+1

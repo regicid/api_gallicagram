@@ -5,15 +5,15 @@
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        .container { 
+       .container { 
             max-width: 800px; 
             margin: 0 auto; 
             padding: 20px;
         }
-        .form-group {
+       .form-group {
             margin-bottom: 15px;
         }
-        .chart-container {
+       .chart-container {
             margin-top: 20px;
             height: 400px;
         }
@@ -51,81 +51,82 @@
         let myChart = null;
 
         document.addEventListener('DOMContentLoaded', function() {
-            document.body.addEventListener('htmx:afterOnLoad', function(evt) {
-                console.log('htmx:afterOnLoad event triggered');
-                try {
-                    const response = JSON.parse(evt.detail.xhr.response);
-                    console.log('Response:', response);
-                    
-                    // Directly access verbs and odd_ratios from the response
-                    const verbs = response.verbs;
-                    const odd_ratios = response.odd_ratios;
+            document.body.addEventListener('htmx:afterProcess', function(event) {
+                if (event.detail.xhr && event.detail.xhr.response) {
+                    try {
+                        const response = JSON.parse(event.detail.xhr.response);
+                        console.log('Response:', response);
+                        
+                        // Directly access verbs and odd_ratios from the response
+                        const verbs = response.verbs;
+                        const odd_ratios = response.odd_ratios;
 
-                    if (!verbs || !odd_ratios) {
-                        throw new Error('Response does not contain expected properties');
-                    }
+                        if (!verbs ||!odd_ratios) {
+                            throw new Error('Response does not contain expected properties');
+                        }
 
-                    if (myChart) {
-                        myChart.destroy();
-                    }
+                        if (myChart) {
+                            myChart.destroy();
+                        }
 
-                    // Check if the canvas element is present
-                    const canvasElement = document.getElementById('myChart');
-                    if (!canvasElement) {
-                        console.error('Canvas element with id "myChart" not found in the DOM');
-                        throw new Error('Canvas element with id "myChart" not found');
-                    }
+                        // Check if the canvas element is present
+                        const canvasElement = document.getElementById('myChart');
+                        if (!canvasElement) {
+                            console.error('Canvas element with id "myChart" not found in the DOM');
+                            throw new Error('Canvas element with id "myChart" not found');
+                        }
 
-                    const ctx = canvasElement.getContext('2d');
-                    if (!ctx) {
-                        throw new Error('Canvas context not available');
-                    }
+                        const ctx = canvasElement.getContext('2d');
+                        if (!ctx) {
+                            throw new Error('Canvas context not available');
+                        }
 
-                    myChart = new Chart(ctx, {
-                        type: 'bar',  // Changed from 'horizontalBar' to 'bar'
-                        data: {
-                            labels: verbs,
-                            datasets: [{
-                                label: 'Odd Ratios',
-                                data: odd_ratios,
-                                backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                                borderColor: 'rgba(75, 192, 192, 1)',
-                                borderWidth: 1
-                            }]
-                        },
-                        options: {
-                            indexAxis: 'y',  // This makes the bar chart horizontal
-                            responsive: true,
-                            maintainAspectRatio: false,
-                            scales: {
-                                x: {
-                                    beginAtZero: true,
-                                    title: {
-                                        display: true,
-                                        text: 'Odd Ratios'
-                                    }
-                                },
-                                y: {
-                                    title: {
-                                        display: true,
-                                        text: 'Verbs'
-                                    }
-                                }
+                        myChart = new Chart(ctx, {
+                            type: 'bar',  
+                            data: {
+                                labels: verbs,
+                                datasets: [{
+                                    label: 'Odd Ratios',
+                                    data: odd_ratios,
+                                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                                    borderColor: 'rgba(75, 192, 192, 1)',
+                                    borderWidth: 1
+                                }]
                             },
-                            plugins: {
-                                legend: {
-                                    position: 'top',
+                            options: {
+                                indexAxis: 'y',  
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                scales: {
+                                    x: {
+                                        beginAtZero: true,
+                                        title: {
+                                            display: true,
+                                            text: 'Odd Ratios'
+                                        }
+                                    },
+                                    y: {
+                                        title: {
+                                            display: true,
+                                            text: 'Verbs'
+                                        }
+                                    }
                                 },
-                                title: {
-                                    display: true,
-                                    text: 'Verb Odd Ratios Analysis'
+                                plugins: {
+                                    legend: {
+                                        position: 'top',
+                                    }, 
+                                    title: {
+                                        display: true,
+                                        text: 'Verb Odd Ratios Analysis'
+                                    }
                                 }
                             }
-                        }
-                    });
-                } catch (error) {
-                    console.error('Error creating chart:', error);
-                    document.getElementById('results-container').textContent = 'Error creating chart. Please check the console for details.';
+                        });
+                    } catch (error) {
+                        console.error('Error creating chart:', error);
+                        document.getElementById('results-container').textContent = 'Error creating chart. Please check the console for details.';
+                    }
                 }
             });
         });

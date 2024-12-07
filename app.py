@@ -655,7 +655,7 @@ def process_data(speaker_1, speaker_2, beginning, end):
     verbs_2 = verbs_2.merge(cues,on="cue").lemmatized_cue.value_counts().reindex(verbs,fill_value=0)
 
     odds_ratio = np.log2((verbs_1/verbs_1.sum())/(verbs_2/verbs_2.sum()))
-    z = verbs_1 + verbs_2 > 25
+    z = verbs_1 + verbs_2 > 25 and verbs_1 > 0 and verbs_2 > 0
     o = odds_ratio.loc[z].sort_values()
     o = pd.concat([o.head(10), o.tail(10)])
     print(o)

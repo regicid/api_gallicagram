@@ -1,0 +1,125 @@
+<!-- templates/app.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Flask App</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .container { 
+            max-width: 800px; 
+            margin: 0 auto; 
+            padding: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .loading {
+            display: none;
+            margin: 20px 0;
+        }
+        .htmx-request .loading {
+            display: block;
+        }
+        .chart-container {
+            margin-top: 20px;
+            height: 400px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Data Processing Form</h1>
+        
+        <div class="form-group">
+            <label for="speaker_1">Speaker 1:</label>
+            <input type="text" id="speaker_1" name="speaker_1">
+        </div>
+        
+        <div class="form-group">
+            <label for="speaker_2">Speaker 2:</label>
+            <input type="text" id="speaker_2" name="speaker_2">
+        </div>
+        
+        <div class="form-group">
+            <label for="verbs_1">Verbs 1:</label>
+            <input type="text" id="verbs_1" name="verbs_1">
+        </div>
+        
+        <div class="form-group">
+            <label for="verbs_2">Verbs 2:</label>
+            <input type="text" id="verbs_2" name="verbs_2">
+        </div>
+        
+        <button hx-post="/app"
+                hx-include="[name='speaker_1'],[name='speaker_2'],[name='verbs_1'],[name='verbs_2']"
+                hx-target="#results-container">
+            Run Analysis
+        </button>
+
+        <div class="loading">
+            Processing... Please wait...
+        </div>
+
+        <div id="results-container">
+            <div id="result" class="result"></div>
+            <div class="chart-container">
+                <canvas id="myChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let myChart = null;
+
+        document.body.addEventListener('htmx:afterOnLoad', function(evt) {
+            const response = JSON.parse(evt.detail.xhr.response);
+            document.getElementById('result').innerText = response.result;
+            
+            // Update chart
+            if (myChart) {
+                myChart.destroy();
+            }
+            
+            const ctx = document.getElementById('myChart').getContext('2d');
+            myChart = new Chart(ctx, {
+                type: 'line',  // or 'bar', 'scatter', etc.
+                data: {
+                    labels: Array.from({length: response.data.length}, (_, i) => i + 1),
+                    datasets: [{
+                        label: 'Analysis Results',
+                        data: response.data,
+                        borderColor: 'rgb(75, 192, 192)',
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        });
+    </script>
+</body>
+</html>

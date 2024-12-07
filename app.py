@@ -614,7 +614,7 @@ def web_interface():
         speaker_2 = request.form.get('speaker_2')
         beginning = request.form.get('beginning')
         end = request.form.get('end')
-        
+        print(speaker_1)
         # Process data
         result, data = process_data(speaker_1, speaker_2, beginning, end)
         

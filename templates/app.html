@@ -68,6 +68,10 @@
                 }
 
                 const ctx = document.getElementById('myChart').getContext('2d');
+                if (!ctx) {
+                    throw new Error('Canvas element with id "myChart" not found');
+                }
+
                 myChart = new Chart(ctx, {
                     type: 'bar',  // Changed from 'horizontalBar' to 'bar'
                     data: {

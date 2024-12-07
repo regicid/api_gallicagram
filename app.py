@@ -617,11 +617,11 @@ def web_interface():
         end = int(request.form.get('end'))
         print(speaker_1)
         # Process data
-        result, data = process_data(speaker_1, speaker_2, beginning, end)
+        verbs, odd_ratios = process_data(speaker_1, speaker_2, beginning, end)
         
         return jsonify({
-            "result": result,
-            "data": data  # This will be your list of numbers
+            "verbs": verbs,
+            "odd_ratios": odd_ratios  # This will be your list of numbers
         })
     
     return render_template('app.html')
@@ -659,4 +659,4 @@ def process_data(speaker_1, speaker_2, beginning, end):
     o = odds_ratio.loc[z].sort_values()
     o = pd.concat([o.head(10), o.tail(10)])
     print(o)
-    return "Processing completed!", [1, 2, 3, 4, 5] 
+    return o.index, o.values

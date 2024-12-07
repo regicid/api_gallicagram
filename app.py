@@ -621,7 +621,7 @@ def web_interface():
         
         return jsonify({
             "verbs": list(verbs),
-            "odd_ratios": list(odd_ratios)  # This will be your list of numbers
+            "odd_ratios": list(odd_ratios),  # This will be your list of numbers
             "variance":list(variance)
         })
     

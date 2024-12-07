@@ -607,4 +607,24 @@ def semantic_search_rap():
 
 @app.route('/app')
 def web_interface():
+    if request.method == 'POST':
+        # Get form data
+        speaker_1 = request.form.get('speaker_1')
+        speaker_2 = request.form.get('speaker_2')
+        verbs_1 = request.form.get('verbs_1')
+        verbs_2 = request.form.get('verbs_2')
+        
+        # Process data
+        result, data = process_data(speaker_1, speaker_2, verbs_1, verbs_2)
+        
+        return jsonify({
+            "result": result,
+            "data": data  # This will be your list of numbers
+        })
+    
     return render_template('app.html')
+
+def process_data(speaker_1, speaker_2, verbs_1, verbs_2):
+    # Your computation logic here
+    # Return both text result and numerical data
+    return "Processing completed!", [1, 2, 3, 4, 5] 

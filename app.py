@@ -620,8 +620,8 @@ def web_interface():
         verbs, odd_ratios = process_data(speaker_1, speaker_2, beginning, end)
         
         return jsonify({
-            "verbs": verbs,
-            "odd_ratios": odd_ratios  # This will be your list of numbers
+            "verbs": list(verbs),
+            "odd_ratios": list(odd_ratios)  # This will be your list of numbers
         })
     
     return render_template('app.html')

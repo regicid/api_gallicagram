@@ -201,6 +201,7 @@ def query():
     rubrique = args.get("rubrique")
     words_to_search = process_input_words(words_input)
     n = max(len(word.split()) for word in words_input.split(','))
+    if corpus=="prenoms":n = 1
     conn = get_db(corpus, n)
     query, query_params = build_query(words_to_search, fr, to, corpus, resolution, rubrique)
     print(query)

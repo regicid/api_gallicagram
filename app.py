@@ -610,12 +610,10 @@ def semantic_search_rap():
 
 @app.route('h_split')
 def h_split():
-    # TODO: recuperer le author_id
-
-    from ulysse_stuff/custom_index import get_all_h_indexes
-
+    args = request.args
+    author_id = args["author_id"]
+    from ulysse_stuff.custom_index import get_all_h_indexes
     result = get_all_h_indexes(author_id)
-
     overall_index = result['overall']
     first_index = result['first']
     middle_index = result['middle']

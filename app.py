@@ -607,6 +607,21 @@ def semantic_search_rap():
     result_indices = search(query_embedding,k = k)
     return render_template('index.html', tables=[corpus_faiss.loc[result_indices].to_html(classes='data')], titles=corpus_faiss.columns.values)
 
+
+@app.route('h_split')
+def h_split():
+    # TODO: recuperer le author_id
+
+    from ulysse_stuff/custom_index import get_all_h_indexes
+
+    result = get_all_h_indexes(author_id)
+
+    overall_index = result['overall']
+    first_index = result['first']
+    middle_index = result['middle']
+    last_index = result['last']
+    return # Wathever
+
 @app.route('/app',methods=['GET', 'POST'])
 def web_interface():
     print("Request received:", request.method)

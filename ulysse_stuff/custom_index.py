@@ -3,7 +3,8 @@
 from typing import Iterable, Optional
 
 import pandas as pd
-
+from dataclasses import dataclass
+import pandas as pd
 
 @dataclass
 class DFs:
@@ -142,8 +143,6 @@ def get_all_h_indexes(author_id: str, dfs = None, year_from = None) -> dict:
 
 
 
-from dataclasses import dataclass
-import pandas as pd
 
 
 

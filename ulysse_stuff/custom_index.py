@@ -1,10 +1,14 @@
 
 
 from typing import Iterable, Optional
-
+from pyalex import Authors, Works
 import pandas as pd
 from dataclasses import dataclass
 import pandas as pd
+from typing import Iterable, Optional
+
+from time import sleep
+
 
 @dataclass
 class DFs:
@@ -17,6 +21,20 @@ class DFs:
     def from_tuple(cls, dfs): return cls(*dfs)
     def as_tuple(self): return (self.authors, self.papers, self.citations, self.authorship)
 
+
+
+
+
+class PyAlexClient:
+    def fetch_author(self, author_id: str) -> dict:
+        # TODO: retry/backoff if desired
+        return Authors()[author_id]
+
+    def iter_works_by_author(self, author_id: str, per_page=200):
+        # Generator of work dicts
+        for page in Works().filter(author={"id": author_id}).paginate(per_page=per_page):
+            for w in page: yield w
+            # sleep(0.1)  # Optional: be nice to the API
 
 def _h_index(citations: Iterable[int]) -> int:
     """Standard h-index from a list/iterable of citation counts."""
@@ -107,22 +125,7 @@ def get_all_h_indexes(author_id: str, dfs = None, year_from = None) -> dict:
 
 
 
-from typing import Iterable, Optional
 
-from time import sleep
-
-
-
-class PyAlexClient:
-    def fetch_author(self, author_id: str) -> dict:
-        # TODO: retry/backoff if desired
-        return Authors()[author_id]
-
-    def iter_works_by_author(self, author_id: str, per_page=200):
-        # Generator of work dicts
-        for page in Works().filter(author={"id": author_id}).paginate(per_page=per_page):
-            for w in page: yield w
-            # sleep(0.1)  # Optional: be nice to the API
 
 
 def get_all_h_indexes(author_id: str, dfs = None, year_from = None) -> dict:

@@ -5,6 +5,16 @@ from typing import Iterable, Optional
 import pandas as pd
 
 
+@dataclass
+class DFs:
+    authors:   pd.DataFrame
+    papers:    pd.DataFrame
+    citations: pd.DataFrame
+    authorship:pd.DataFrame
+
+    @classmethod
+    def from_tuple(cls, dfs): return cls(*dfs)
+    def as_tuple(self): return (self.authors, self.papers, self.citations, self.authorship)
 
 
 def _h_index(citations: Iterable[int]) -> int:
@@ -152,16 +162,6 @@ def init_tables() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFram
     authorship_df= pd.DataFrame(columns=AUTHORSHIP_COLS)
     return authors_df, papers_df, citations_df, authorship_df
 
-@dataclass
-class DFs:
-    authors:   pd.DataFrame
-    papers:    pd.DataFrame
-    citations: pd.DataFrame
-    authorship:pd.DataFrame
-
-    @classmethod
-    def from_tuple(cls, dfs): return cls(*dfs)
-    def as_tuple(self): return (self.authors, self.papers, self.citations, self.authorship)
 
 def _split_name(name: str) -> tuple[str, str]:
     """Split a name into first and last name, handling cases with no space."""

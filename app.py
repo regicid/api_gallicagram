@@ -618,7 +618,7 @@ def h_split():
     first_index = result['first']
     middle_index = result['middle']
     last_index = result['last']
-    return # Wathever
+    return jsonify(result)
 
 @app.route('/app',methods=['GET', 'POST'])
 def web_interface():

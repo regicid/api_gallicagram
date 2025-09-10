@@ -608,7 +608,7 @@ def semantic_search_rap():
     return render_template('index.html', tables=[corpus_faiss.loc[result_indices].to_html(classes='data')], titles=corpus_faiss.columns.values)
 
 
-@app.route('h_split')
+@app.route('/h_split')
 def h_split():
     args = request.args
     author_id = args["author_id"]

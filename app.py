@@ -10,7 +10,9 @@ import re
 import json
 from waitress import serve
 from functools import lru_cache
+from flask_cors import CORS
 app = Flask(__name__)
+CORS(app)
 
 def get_db(corpus,n):
     if corpus=="livres":
@@ -612,12 +614,14 @@ def semantic_search_rap():
 def h_split():
     args = request.args
     author_id = args["author_id"]
+    print(author_id)
     from ulysse_stuff.custom_index import get_all_h_indexes
     result = get_all_h_indexes(author_id)
     overall_index = result['overall']
     first_index = result['first']
     middle_index = result['middle']
     last_index = result['last']
+    print(result)
     return jsonify(result)
 
 @app.route('/app',methods=['GET', 'POST'])

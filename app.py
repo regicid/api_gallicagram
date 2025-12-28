@@ -493,15 +493,22 @@ def query_article():
         to = args["to"]
     except:
         to = 2022
+    resolution = args.get("resolution", "mois")
     mot = args.get("mot").lower()
     conn = sqlite3.connect("/opt/bazoulay/ngram/1gram_lemonde_article.db")
-    query = f"select count(*) as n,gram,annee,mois from gram where gram='{mot}' and annee between {fr} and {to} group by annee,mois"
+    time_steps = "annee"
+    if resolution in ["mois","jour"]:time_steps += ",mois"
+    if resolution=="jour":time_steps += ",jour"
+    query = f"select count(*) as n,gram,{time_steps} from gram where gram='{mot}' and annee between {fr} and {to} group by {time_steps}"
     db_df = pd.read_sql(query,conn)
     conn.close()
-    base = pd.read_csv("/opt/bazoulay/ngram/base_lemonde_articles.csv")
+    base = pd.read_csv("/opt/bazoulay/ngram/base_articles.csv")
     base = base.loc[(base.annee>=int(fr))&(base.annee<=int(to))]
-    db_df = pd.merge(db_df,base,how="left")
+    if resolution=="annee":base = base.groupby("annee").agg({"total":"sum"}).reset_index()
+    if resolution=="mois":base = base.groupby(["annee","mois"]).agg({"total":"sum"}).reset_index()
+    db_df = pd.merge(db_df,base,how="right")
     db_df.n = db_df.n.fillna(0)
+    db_df["gram"] = mot
     return db_df.to_csv(index=False)
 
 @app.route("/query_persee")

@@ -692,10 +692,10 @@ def process_data(speaker_1, speaker_2, beginning, end):
 
 
 # Proxy route for FastAPI
-@app.route('/api/context', methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
-def proxy_to_fastapi():
-    # Forward to FastAPI running on port 8001
-    url = f'http://127.0.0.1:8001/api/context'  # adjust path if needed
+@app.route('/api/<path:subpath>', methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
+def proxy_to_fastapi(subpath):
+    # Forward any /api/* request to FastAPI
+    url = f'http://127.0.0.1:8001/api/{subpath}'
     
     try:
         resp = requests.request(
@@ -709,7 +709,6 @@ def proxy_to_fastapi():
             timeout=30
         )
         
-        # Create response with same status and headers
         excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
         headers = [(name, value) for name, value in resp.raw.headers.items()
                    if name.lower() not in excluded_headers]

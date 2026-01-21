@@ -459,9 +459,9 @@ def associated_article():
     except:
         to = 2022
     try:
-        n_joker = args["n_joker"]
+        n_joker = str(args["n_joker"])
     except:
-        n_joker = 100
+        n_joker = 50
     if n_joker=="all":
         n_joker = 10**10 
     else:n_joker = int(n_joker)
@@ -479,6 +479,7 @@ def associated_article():
         stopwords = pd.read_csv("/opt/bazoulay/docker_gallicagram/gallicagram/stopwords.csv").iloc[:stopwords,]
         z = db_df.gram.isin(stopwords.monogram)
         db_df = db_df.loc[~z,]
+    db_df = db_df.iloc[:n_joker]
     print("associated_article " + mot) 
     return db_df.to_csv(index=False)
 
@@ -687,3 +688,32 @@ def process_data(speaker_1, speaker_2, beginning, end):
     o = pd.concat([o.head(10), o.tail(10)]).drop_duplicates()
     print(o)
     return o.index, o.values, variance[o.index].values
+
+
+
+# Proxy route for FastAPI
+@app.route('/api/context', methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
+def proxy_to_fastapi():
+    # Forward to FastAPI running on port 8001
+    url = f'http://127.0.0.1:8001/context'  # adjust path if needed
+    
+    try:
+        resp = requests.request(
+            method=request.method,
+            url=url,
+            params=request.args,
+            headers={key: value for key, value in request.headers if key.lower() != 'host'},
+            data=request.get_data(),
+            cookies=request.cookies,
+            allow_redirects=False,
+            timeout=30
+        )
+        
+        # Create response with same status and headers
+        excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
+        headers = [(name, value) for name, value in resp.raw.headers.items()
+                   if name.lower() not in excluded_headers]
+        
+        return Response(resp.content, resp.status_code, headers)
+    except requests.exceptions.RequestException as e:
+        return {'error': f'FastAPI service unavailable: {str(e)}'}, 503

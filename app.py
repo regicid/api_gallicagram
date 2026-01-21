@@ -695,7 +695,7 @@ def process_data(speaker_1, speaker_2, beginning, end):
 @app.route('/api/context', methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
 def proxy_to_fastapi():
     # Forward to FastAPI running on port 8001
-    url = f'http://127.0.0.1:8001/context'  # adjust path if needed
+    url = f'http://127.0.0.1:8001/api/context'  # adjust path if needed
     
     try:
         resp = requests.request(

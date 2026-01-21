@@ -2,7 +2,7 @@ import io
 from io import StringIO
 import matplotlib.pyplot as plt
 import base64
-from flask import Flask,render_template,g,request,response,make_response, send_file, jsonify
+from flask import Flask,render_template,g,request,Response,make_response, send_file, jsonify
 import sqlite3
 import pandas as pd
 import numpy as np

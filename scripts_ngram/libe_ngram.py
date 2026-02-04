@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from collections import Counter
 from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String
 import re
+import pandas as pd
 import sys
 corpus = pd.read_csv("/data/corpus/liberation_metadata.csv")
 corpus["year"] = pd.to_datetime(corpus.date_only).dt.year
@@ -35,22 +36,20 @@ end_date = datetime(2026, 12, 31)
 current_date = start_date
 
 while current_date <= end_date:
-    year = current_date.year
-    month = current_date.month
-    day = current_date.day
-    
-    # Filter corpus for this specific day
-    daily_corpus = corpus.loc[
-        (corpus.year == year) & 
-        (corpus.month == month) & 
-        (corpus.day == day)
-    ]
-	text = []
+	year = current_date.year
+	month = current_date.month
+	day = current_date.day
+	# Filter corpus for this specific day
+	daily_corpus = corpus.loc[
+		(corpus.year == year) & 
+		(corpus.month == month) & 
+		(corpus.day == day)
+	]
+	text = ""
 	for url in daily_corpus.url:
-		filename = /data/corpus/url.replace("/","_") + ".txt"
 		filename = "/data/corpus/liberation/" + url.replace("/","_") + ".txt"
 		f = open(filename,"r")
-		text = text.append(f.read())
+		text = text + "\n" + f.read()
 		f.close()
 	text = re.sub("(?<=[A-Z])\.","",text)  #Garder les Monsieur
 	text_split = re.split('[!"#$%&\()*+,./:;<=>?@[\\]^_`{|}~\n]',text.lower().replace("’","'"))
@@ -70,8 +69,8 @@ while current_date <= end_date:
 			matrix["mois"] = month
 			matrix["jour"] = day
 			matrix.to_sql("gram",engines[length],if_exists="append",index=False)
-    # Move to next day
-    current_date += timedelta(days=1)
+	# Move to next day
+	current_date += timedelta(days=1)
 
 
 

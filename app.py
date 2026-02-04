@@ -173,11 +173,11 @@ def process_results(db_df, base, corpus, resolution, rubrique):
         db_df["n"] = db_df["n"].fillna(0)
         db_df["total"] = db_df["total"].fillna(0)
         db_df["gram"] = db_df["gram"].fillna(db_df["gram"].iloc[0] if len(db_df) > 0 else "") 
-    elif resolution == "mois" and corpus in ["lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien", "presse"]:
+    elif resolution == "mois" and corpus in ["libe","lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien", "presse"]:
         base = base.groupby(["annee", "mois"]).agg({'total': 'sum'}).reset_index()
         db_df = pd.merge(db_df, base, on=["annee", "mois"], how="outer")
         db_df["n"] = db_df["n"].fillna(0)
-    elif resolution == "annee" and corpus in ["lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien", "presse"]:
+    elif resolution == "annee" and corpus in ["libe","lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien", "presse"]:
         base = base.groupby(["annee"]).agg({'total': 'sum'}).reset_index()
         db_df = pd.merge(db_df, base, on=["annee"], how="outer")
         db_df["n"] = db_df["n"].fillna(0)

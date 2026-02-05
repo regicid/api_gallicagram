@@ -101,7 +101,7 @@ def process_input_words(words_input):
 def build_query(words_to_search, fr, to, corpus, resolution, rubrique):
     placeholder = ','.join(['?'] * len(words_to_search))
     query_params = words_to_search + [fr, to]
-    if resolution == "default" or resolution == "jour" or corpus == "livres" or (resolution == "mois" and corpus in ["presse", "ddb", "lemonde_rubriques"]):
+    if resolution == "default" or resolution == "jour" or corpus == "livres" or (resolution == "mois" and corpus in ["presse", "ddb", "lemonde_rubriques","mediapart","lefigaro","lesechos","leparisien","lacroix"]):
         query = f"SELECT * FROM gram WHERE gram IN ({placeholder}) AND annee BETWEEN ? AND ?"
     elif resolution == "annee":
         base = "gram_mois" if corpus in ["libe","lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien"] else "gram"

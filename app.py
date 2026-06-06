@@ -11,6 +11,8 @@ import json
 from waitress import serve
 from functools import lru_cache
 from flask_cors import CORS
+import requests
+
 app = Flask(__name__)
 CORS(app)
 
@@ -173,11 +175,11 @@ def process_results(db_df, base, corpus, resolution, rubrique):
         db_df["n"] = db_df["n"].fillna(0)
         db_df["total"] = db_df["total"].fillna(0)
         db_df["gram"] = db_df["gram"].fillna(db_df["gram"].iloc[0] if len(db_df) > 0 else "") 
-    elif resolution == "mois" and corpus in ["libe","lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien", "presse"]:
+    elif resolution == "mois" and corpus in ["libe","lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien", "presse","mediapart"]:
         base = base.groupby(["annee", "mois"]).agg({'total': 'sum'}).reset_index()
         db_df = pd.merge(db_df, base, on=["annee", "mois"], how="outer")
         db_df["n"] = db_df["n"].fillna(0)
-    elif resolution == "annee" and corpus in ["libe","lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien", "presse"]:
+    elif resolution == "annee" and corpus in ["libe","lemonde", "huma", "paris", "figaro", "moniteur", "temps", "petit_journal", "constitutionnel", "journal_des_debats", "la_presse", "petit_parisien", "presse","mediapart","lefigaro","leparisien","lacroix","lesechos"]:
         base = base.groupby(["annee"]).agg({'total': 'sum'}).reset_index()
         db_df = pd.merge(db_df, base, on=["annee"], how="outer")
         db_df["n"] = db_df["n"].fillna(0)
@@ -691,28 +693,60 @@ def process_data(speaker_1, speaker_2, beginning, end):
 
 
 
-# Proxy route for FastAPI
-@app.route('/api/<path:subpath>', methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
-def proxy_to_fastapi(subpath):
-    # Forward any /api/* request to FastAPI
-    url = f'http://127.0.0.1:8001/api/{subpath}'
-    
+def forward_request(target_url):
     try:
+        # stream=True est indispensable pour que les flux de données (comme SSE / Server-Sent Events)
+        # ne soient pas mis en mémoire tampon (bufférisés) par le proxy.
         resp = requests.request(
             method=request.method,
-            url=url,
+            url=target_url,
             params=request.args,
             headers={key: value for key, value in request.headers if key.lower() != 'host'},
             data=request.get_data(),
             cookies=request.cookies,
             allow_redirects=False,
-            timeout=30
+            timeout=30,
+            stream=True  # Support du streaming de données
         )
         
         excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
         headers = [(name, value) for name, value in resp.raw.headers.items()
                    if name.lower() not in excluded_headers]
         
+        # Si la réponse est un flux d'événements (Server-Sent Events pour MCP), 
+        # on redirige le flux en continu vers le client.
+        if 'text/event-stream' in resp.headers.get('Content-Type', ''):
+            def generate():
+                for chunk in resp.iter_content(chunk_size=1024):
+                    yield chunk
+            return Response(generate(), resp.status_code, headers)
+            
+        # Sinon, retour standard de la réponse
         return Response(resp.content, resp.status_code, headers)
     except requests.exceptions.RequestException as e:
-        return {'error': f'FastAPI service unavailable: {str(e)}'}, 503
+        return {'error': f'Service indisponible : {str(e)}'}, 503
+
+
+# 1. Serveur MCP (Port 8003) - Exposé sous /v2/mcp/
+# Cette route est plus spécifique et doit intercepter les appels MCP en premier
+@app.route('/v2/mcp/<path:subpath>', methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
+def proxy_to_mcp(subpath):
+    # Les appels vers /v2/mcp/mcp ou /v2/mcp/sse iront vers http://127.0.0.1:8003/mcp ou /sse
+    url = f'http://127.0.0.1:8003/{subpath}'
+    return forward_request(url)
+
+
+# 2. Gallicagram API V2 (Port 8002) - Exposée sous /v2/
+# Les routes de app.py commençant déjà par "/v2/", on conserve ce préfixe dans l'URL de destination.
+@app.route('/v2/<path:subpath>', methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
+def proxy_to_v2_api(subpath):
+    # Les appels vers /v2/query iront vers http://127.0.0.1:8002/v2/query
+    url = f'http://127.0.0.1:8002/v2/{subpath}'
+    return forward_request(url)
+
+
+# 3. (Optionnel) Ancienne API V1 si toujours nécessaire (Port 8001)
+@app.route('/api/<path:subpath>', methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
+def proxy_to_v1_api(subpath):
+    url = f'http://127.0.0.1:8001/api/{subpath}'
+    return forward_request(url)

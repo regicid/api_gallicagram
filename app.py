@@ -750,3 +750,12 @@ def proxy_to_v2_api(subpath):
 def proxy_to_v1_api(subpath):
     url = f'http://127.0.0.1:8001/api/{subpath}'
     return forward_request(url)
+
+
+# 4. API Agora (Port 8010) - Presse quotidienne stage-mids, exposée sous /agora/
+# Le service tourne à part (tmux agora, code : github.com/corto2corto/ngram-press)
+@app.route('/agora/<path:subpath>', methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
+def proxy_to_agora(subpath):
+    # Les appels vers /agora/query iront vers http://127.0.0.1:8010/query
+    url = f'http://127.0.0.1:8010/{subpath}'
+    return forward_request(url)

@@ -617,6 +617,51 @@ def query_cairn():
     print("cairn " + word)
     return db_df[["n", "annee", "gram"] + (["revue"] if by_revue else []) + ["total"]].to_csv(index=False)
 
+tv_corpora = ("bfmtv", "cnews", "franceinfo")
+
+@app.route("/query_tv")
+def query_tv():
+    # corpus : bfmtv, cnews ou franceinfo. Dates stockées en AAAAMMJJ (résolution journalière).
+    # from/to : AAAA, AAAAMM ou AAAAMMJJ ; resolution : jour (défaut), mois ou annee.
+    args = request.args
+    corpus = args.get("corpus", "")
+    if corpus not in tv_corpora:
+        return Response(f"corpus doit être parmi : {', '.join(tv_corpora)}", status=400)
+    word = args.get("mot", "").lower().strip()
+    words = word.split()
+    n = len(words)
+    if n not in (1, 2, 3):
+        return Response("mot doit contenir entre 1 et 3 mots", status=400)
+    resolution = args.get("resolution", "jour")
+    if resolution not in ("jour", "mois", "annee"):
+        return Response("resolution doit être jour, mois ou annee", status=400)
+    fr = args.get("from", "1900")
+    to = args.get("to", "2100")
+    if not (fr.isdigit() and to.isdigit() and len(fr) in (4, 6, 8) and len(to) in (4, 6, 8)):
+        return Response("from/to doivent être au format AAAA, AAAAMM ou AAAAMMJJ", status=400)
+    fr = int(fr.ljust(8, "0"))
+    to = int(to + "9" * (8 - len(to)))
+    table = ["unigram", "bigram", "trigram"][n - 1]
+    conn = sqlite3.connect(f"/opt/bazoulay/ngram/{corpus}_ngram.db")
+    ids = [conn.execute("select id from token where word=?", (w,)).fetchone() for w in words]
+    base = pd.read_sql_query(f"select date, total from total_{table} where date between ? and ?", conn, params=[fr, to])
+    if all(ids):
+        w_condition = " and ".join(f"w{i+1}=?" for i in range(n))
+        db_df = pd.read_sql_query(f"select date, n from {table} where {w_condition} and date between ? and ?", conn, params=[i[0] for i in ids] + [fr, to])
+    else:
+        db_df = pd.DataFrame(columns=["date", "n"])
+    conn.close()
+    db_df = pd.merge(db_df, base, how="right")
+    db_df.n = db_df.n.fillna(0).astype(int)
+    db_df["annee"] = db_df.date // 10000
+    db_df["mois"] = db_df.date // 100 % 100
+    db_df["jour"] = db_df.date % 100
+    time_steps = {"annee": ["annee"], "mois": ["annee", "mois"], "jour": ["annee", "mois", "jour"]}[resolution]
+    db_df = db_df.groupby(time_steps).agg({"n": "sum", "total": "sum"}).reset_index().sort_values(time_steps)
+    db_df["gram"] = word
+    print(corpus + " " + word)
+    return db_df[["n"] + time_steps + ["gram", "total"]].to_csv(index=False)
+
 corpus_rap =pd.read_csv("~/LRFAF/corpus.csv")
 
 @app.route("/source_rap")

@@ -12,6 +12,7 @@ from waitress import serve
 from functools import lru_cache
 from flask_cors import CORS
 import requests
+import os
 
 app = Flask(__name__)
 CORS(app)
@@ -567,7 +568,56 @@ def query_persee():
     print(word)
     return db_df.to_csv(index=False)
 
-corpus_rap = pd.read_csv("~/LRFAF/corpus.csv")
+cairn_revues = pd.read_csv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "cairn_revues.csv"))
+cairn_disciplines = {}
+for code, disciplines in zip(cairn_revues["Code CAIRN"], cairn_revues["Disciplines"].fillna("")):
+    for d in disciplines.split(";"):
+        if d.strip():
+            cairn_disciplines.setdefault(d.strip().lower(), set()).add(code)
+
+@app.route("/query_cairn")
+def query_cairn():
+    # revue : codes CAIRN séparés par des espaces ; discipline : disciplines séparées par des virgules
+    # Les deux se cumulent (union). Résolution annuelle uniquement.
+    args = request.args
+    word = args.get("mot", "").lower().strip()
+    words = word.split()
+    n = len(words)
+    if n not in (1, 2, 3):
+        return Response("mot doit contenir entre 1 et 3 mots", status=400)
+    fr = int(args.get("from", 1958))
+    to = int(args.get("to", 2030))
+    by_revue = args.get("by_revue", "False").lower() in ("true", "1")
+    revues = set(args.get("revue", "all").split()) - {"all"}
+    for d in args.get("discipline", "").split(","):
+        if not d.strip():
+            continue
+        if d.strip().lower() not in cairn_disciplines:
+            return Response(f"discipline inconnue : {d.strip()}", status=400)
+        revues |= cairn_disciplines[d.strip().lower()]
+    revue_condition, revue_params = "", []
+    if revues:
+        revue_condition = f"and revue in ({','.join('?' * len(revues))})"
+        revue_params = sorted(revues)
+    table = ["unigram", "bigram", "trigram"][n - 1]
+    group = "date, revue" if by_revue else "date"
+    conn = sqlite3.connect("/opt/bazoulay/ngram/cairn_ngram.db")
+    ids = [conn.execute("select id from token where word=?", (w,)).fetchone() for w in words]
+    base = pd.read_sql_query(f"select date as annee, {'revue, ' if by_revue else ''}sum(total) as total from total_{table} where date between ? and ? {revue_condition} group by {group}", conn, params=[fr, to] + revue_params)
+    if all(ids):
+        w_condition = " and ".join(f"w{i+1}=?" for i in range(n))
+        db_df = pd.read_sql_query(f"select date as annee, {'revue, ' if by_revue else ''}sum(n) as n from {table} where {w_condition} and date between ? and ? {revue_condition} group by {group}", conn, params=[i[0] for i in ids] + [fr, to] + revue_params)
+    else:
+        db_df = pd.DataFrame(columns=["annee", "revue", "n"] if by_revue else ["annee", "n"])
+    conn.close()
+    db_df = pd.merge(db_df, base, how="right")
+    db_df.n = db_df.n.fillna(0).astype(int)
+    db_df["gram"] = word
+    db_df = db_df.sort_values(["annee", "revue"] if by_revue else "annee")
+    print("cairn " + word)
+    return db_df[["n", "annee", "gram"] + (["revue"] if by_revue else []) + ["total"]].to_csv(index=False)
+
+corpus_rap =pd.read_csv("~/LRFAF/corpus.csv")
 
 @app.route("/source_rap")
 def source_rap():

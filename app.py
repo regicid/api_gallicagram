@@ -662,6 +662,106 @@ def query_tv():
     print(corpus + " " + word)
     return db_df[["n"] + time_steps + ["gram", "total"]].to_csv(index=False)
 
+ngram_tables = ["unigram", "bigram", "trigram", "quadrigram", "pentagram"]
+ngram_steps = ["annee", "mois", "jour"]
+
+@lru_cache(maxsize=None)
+def ngram_schema(db_path, table):
+    # Colonnes de temps d'une table token : annee[, mois[, jour]] séparées,
+    # ou une seule colonne date au format AAAA, AAAAMM ou AAAAMMJJ (cairn, tv).
+    # Renvoie (pas de temps disponibles, largeur de date ou None), ou None si la table n'existe pas.
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    cols = [c[1] for c in conn.execute(f"pragma table_info({table})")]
+    if "date" in cols:
+        d = conn.execute(f"select date from {table} limit 1").fetchone()
+        conn.close()
+        return (tuple(ngram_steps[:(len(str(d[0])) - 2) // 2]), len(str(d[0]))) if d else None
+    conn.close()
+    steps = tuple(s for s in ngram_steps if s in cols)
+    return (steps, None) if steps else None
+
+def ngram_time_sql(steps, width, resolution, fr, to):
+    # select, group by et condition de période pour les pas de temps jusqu'à `resolution`.
+    # fr/to sont des chaînes AAAAMMJJ complétées ; la condition porte sur la clé primaire.
+    out = steps[:steps.index(resolution) + 1]
+    bounds = lambda s: [int(s[0:4]), int(s[4:6]), int(s[6:8])][:len(steps)]
+    if width is None:
+        select = ", ".join(out)
+        cols = f"({', '.join(steps)})"
+        period = f"{cols} between ({', '.join('?' * len(steps))}) and ({', '.join('?' * len(steps))})"
+        return select, ", ".join(out), period, bounds(fr) + bounds(to)
+    scale = 10 ** (width - 4)
+    exprs = {"annee": f"date / {scale}", "mois": f"date / {max(scale // 100, 1)} % 100", "jour": "date % 100"}
+    select = ", ".join(f"{exprs[s]} as {s}" for s in out)
+    return select, ", ".join(out), "date between ? and ?", [int(fr[:width]), int(to[:width])]
+
+@app.route("/query_ngram")
+def query_ngram():
+    # Route générique pour les bases token {corpus}_ngram.db (token + unigram/bigram/... + total_*).
+    # mot : ',' sépare des séries, '+' additionne des variantes ; 1 à 5 mots par n-gramme.
+    # from/to : AAAA, AAAAMM ou AAAAMMJJ ; resolution : annee, mois ou jour (défaut : la plus fine disponible).
+    # Si la table total_* manque, les totaux viennent des CSV de get_base.
+    args = request.args
+    corpus = args.get("corpus", "")
+    if not re.fullmatch(r"[a-z0-9_]+", corpus):
+        return Response("corpus invalide", status=400)
+    db_path = f"/opt/bazoulay/ngram/{corpus}_ngram.db"
+    if not os.path.exists(db_path):
+        return Response(f"corpus inconnu : {corpus}", status=400)
+    fr = args.get("from", "1000")
+    to = args.get("to", "2100")
+    if not (fr.isdigit() and to.isdigit() and len(fr) in (4, 6, 8) and len(to) in (4, 6, 8)):
+        return Response("from/to doivent être au format AAAA, AAAAMM ou AAAAMMJJ", status=400)
+    fr = fr.ljust(8, "0")
+    to = to + "9" * (8 - len(to))
+    series = [[v.lower().split() for v in s.split("+")] for s in args.get("mot", "").split(",")]
+    if not all(v and all(0 < len(w) <= len(ngram_tables) for w in v) for v in series):
+        return Response(f"mot doit contenir entre 1 et {len(ngram_tables)} mots par n-gramme", status=400)
+    resolution = args.get("resolution", "default")
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    results = []
+    for variants in series:
+        n = len(variants[0])
+        if any(len(w) != n for w in variants):
+            return Response("les variantes d'une même série ('+') doivent avoir le même nombre de mots", status=400)
+        table = ngram_tables[n - 1]
+        schema = ngram_schema(db_path, table)
+        if schema is None:
+            return Response(f"pas de table {table} pour le corpus {corpus}", status=400)
+        steps, width = schema
+        res = steps[-1] if resolution == "default" else resolution
+        if res not in steps:
+            return Response(f"resolution doit être parmi : {', '.join(steps)}", status=400)
+        select, group, period, period_params = ngram_time_sql(steps, width, res, fr, to)
+        out = group.split(", ")
+        # Comptes : une requête par variante (clé primaire w1, w2, ..., temps), sommées ensuite
+        counts = []
+        w_condition = " and ".join(f"w{i+1}=?" for i in range(n))
+        for words in variants:
+            ids = [conn.execute("select id from token where word=?", (w,)).fetchone() for w in words]
+            if all(ids):
+                counts.append(pd.read_sql_query(f"select {select}, sum(n) as n from {table} where {w_condition} and {period} group by {group}", conn, params=[i[0] for i in ids] + period_params))
+        db_df = pd.concat(counts).groupby(out, as_index=False).n.sum() if counts else pd.DataFrame(columns=out + ["n"])
+        # Totaux
+        if ngram_schema(db_path, f"total_{table}") is not None:
+            base = pd.read_sql_query(f"select {select}, sum(total) as total from total_{table} where {period} group by {group}", conn, params=period_params)
+        else:
+            base = get_base(corpus, n)
+            if any(s not in base.columns for s in out):
+                return Response(f"pas de totaux à la résolution {res} pour le corpus {corpus}", status=400)
+            base_steps = [s for s in ngram_steps if s in base.columns]
+            key = sum(base[s] * 100 ** (len(base_steps) - 1 - i) for i, s in enumerate(base_steps))
+            k = 2 * len(base_steps) + 2
+            base = base[(key >= int(fr[:k])) & (key <= int(to[:k]))]
+            base = base.groupby(out, as_index=False).total.sum()
+        db_df = pd.merge(db_df, base, how="right", on=out)
+        db_df.n = db_df.n.fillna(0).astype(int)
+        db_df["gram"] = "+".join(" ".join(w) for w in variants)
+        results.append(db_df.sort_values(out)[["n"] + out + ["gram", "total"]])
+    conn.close()
+    print(corpus + " " + args.get("mot", ""))
+    return pd.concat(results).to_csv(index=False)
+
 corpus_rap =pd.read_csv("~/LRFAF/corpus.csv")
 
 @app.route("/source_rap")

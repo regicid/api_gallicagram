@@ -762,6 +762,93 @@ def query_ngram():
     print(corpus + " " + args.get("mot", ""))
     return pd.concat(results).to_csv(index=False)
 
+ngram_max_forms = 10000        # nombre max de formes pour un motif joker (*, ?)
+ngram_scan_limit = 2 * 10**9   # taille (octets) au-delà de laquelle on refuse les scans complets
+
+def ngram_pattern(args, words):
+    # Classement des n-grammes correspondant à un motif sur une base token {corpus}_ngram.db.
+    # Chaque mot est exact, '_' (n'importe quel mot) ou un motif glob avec * et ? ('addict*').
+    # Renvoie un CSV tot,gram trié par fréquence décroissante sur la période, ou une Response d'erreur.
+    corpus = args.get("corpus", "")
+    if not re.fullmatch(r"[a-z0-9_]+", corpus):
+        return Response("corpus invalide", status=400)
+    db_path = f"/opt/bazoulay/ngram/{corpus}_ngram.db"
+    if not os.path.exists(db_path):
+        return Response(f"corpus inconnu : {corpus}", status=400)
+    n = len(words)
+    if not 0 < n <= len(ngram_tables):
+        return Response(f"le motif doit contenir entre 1 et {len(ngram_tables)} mots", status=400)
+    if all(w == "_" for w in words):
+        return Response("le motif doit contenir au moins un mot", status=400)
+    fr = args.get("from", "1000")
+    to = args.get("to", "2100")
+    if not (fr.isdigit() and to.isdigit() and len(fr) in (4, 6, 8) and len(to) in (4, 6, 8)):
+        return Response("from/to doivent être au format AAAA, AAAAMM ou AAAAMMJJ", status=400)
+    fr = fr.ljust(8, "0")
+    to = to + "9" * (8 - len(to))
+    n_joker = args.get("n_joker", "50")
+    if n_joker != "all" and not n_joker.isdigit():
+        return Response("n_joker doit être un entier ou 'all'", status=400)
+    big = os.path.getsize(db_path) > ngram_scan_limit
+    # Sans premier mot fixé, la clé primaire (w1, w2, ..., temps) ne sert pas : scan complet
+    if big and (words[0] == "_" or words[0][:1] in "*?"):
+        return Response(f"sur le corpus {corpus}, le premier mot ne peut pas être '_' ni commencer par * ou ?", status=400)
+    table = ngram_tables[n - 1]
+    schema = ngram_schema(db_path, table)
+    if schema is None:
+        return Response(f"pas de table {table} pour le corpus {corpus}", status=400)
+    steps, width = schema
+    _, _, period, period_params = ngram_time_sql(steps, width, steps[0], fr, to)
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conditions, params = [], []
+    for i, w in enumerate(words):
+        if w == "_":
+            continue
+        if "*" in w or "?" in w:
+            ids = [r[0] for r in conn.execute("select id from token where word glob ? limit ?", (w, ngram_max_forms + 1))]
+            if len(ids) > ngram_max_forms:
+                conn.close()
+                return Response(f"le motif {w} correspond à plus de {ngram_max_forms} formes, le préciser", status=400)
+            conditions.append(f"w{i+1} in ({','.join(map(str, ids))})")
+        else:
+            id = conn.execute("select id from token where word=?", (w,)).fetchone()
+            conditions.append(f"w{i+1}=?")
+            params.append(id[0] if id else -1)
+    w_cols = ", ".join(f"w{i+1}" for i in range(n))
+    gram = " || ' ' || ".join(f"t{i+1}.word" for i in range(n))
+    joins = " ".join(f"join token t{i+1} on t{i+1}.id=g.w{i+1}" for i in range(n))
+    limit = "" if n_joker == "all" else f"limit {int(n_joker)}"
+    db_df = pd.read_sql_query(
+        f"select g.tot, {gram} as gram from (select {w_cols}, sum(n) as tot from {table} "
+        f"where {' and '.join(conditions)} and {period} group by {w_cols} order by tot desc {limit}) g {joins} order by g.tot desc",
+        conn, params=params + period_params)
+    conn.close()
+    print(corpus + " " + " ".join(words))
+    return db_df.to_csv(index=False)
+
+@app.route("/joker_ngram")
+def joker_ngram():
+    # Équivalent de /joker pour les bases token : mots les plus fréquents après (after=True, défaut)
+    # ou avant (after=False) `mot`. length : taille du n-gramme cherché (défaut : nombre de mots + 1).
+    # '_' peut aussi être placé explicitement dans mot ('la _ de'). Paramètres : corpus, mot, from, to, n_joker.
+    args = request.args
+    words = args.get("mot", "").lower().split()
+    if "_" not in words:
+        length = args.get("length", str(len(words) + 1))
+        if not length.isdigit() or int(length) <= len(words):
+            return Response("length doit être un entier supérieur au nombre de mots", status=400)
+        jokers = ["_"] * (int(length) - len(words))
+        words = words + jokers if args.get("after", "True") == "True" else jokers + words
+    return ngram_pattern(args, words)
+
+@app.route("/wildcard_ngram")
+def wildcard_ngram():
+    # Formes correspondant à un motif avec jokers glob : * (0 ou plusieurs caractères), ? (un caractère).
+    # Ex. mot=addict* ; mot=addict* aux ; mot=*isme (corpus de petite taille uniquement).
+    # Paramètres : corpus, mot, from, to, n_joker. Renvoie tot,gram.
+    args = request.args
+    return ngram_pattern(args, args.get("mot", "").lower().split())
+
 corpus_rap =pd.read_csv("~/LRFAF/corpus.csv")
 
 @app.route("/source_rap")

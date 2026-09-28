@@ -662,6 +662,13 @@ def query_tv():
     print(corpus + " " + word)
     return db_df[["n"] + time_steps + ["gram", "total"]].to_csv(index=False)
 
+ngram_dirs = {False: "/opt/bazoulay/ngram", True: "/opt/bazoulay/stage-mids/data"}
+
+def ngram_db_path(args, corpus):
+    # elias=true : bases de presse web contemporaine (stage-mids/data) au lieu de /opt/bazoulay/ngram
+    elias = args.get("elias", "false").lower() in ("true", "1")
+    return f"{ngram_dirs[elias]}/{corpus}_ngram.db"
+
 ngram_tables = ["unigram", "bigram", "trigram", "fourgram", "fivegram"]  # noms écrits par convert_ngram.py
 ngram_steps = ["annee", "mois", "jour"]
 
@@ -792,7 +799,7 @@ def query_ngram():
     corpus = args.get("corpus", "")
     if not re.fullmatch(r"[a-z0-9_]+", corpus):
         return Response("corpus invalide", status=400)
-    db_path = f"/opt/bazoulay/ngram/{corpus}_ngram.db"
+    db_path = ngram_db_path(args, corpus)
     if not os.path.exists(db_path):
         return Response(f"corpus inconnu : {corpus}", status=400)
     fr = args.get("from", "1000")
@@ -928,7 +935,7 @@ def ngram_pattern(args, words):
     corpus = args.get("corpus", "")
     if not re.fullmatch(r"[a-z0-9_]+", corpus):
         return Response("corpus invalide", status=400)
-    db_path = f"/opt/bazoulay/ngram/{corpus}_ngram.db"
+    db_path = ngram_db_path(args, corpus)
     if not os.path.exists(db_path):
         return Response(f"corpus inconnu : {corpus}", status=400)
     n = len(words)
@@ -1035,7 +1042,7 @@ def associated_ngram():
     corpus = args.get("corpus", "")
     if not re.fullmatch(r"[a-z0-9_]+", corpus):
         return Response("corpus invalide", status=400)
-    db_path = f"/opt/bazoulay/ngram/{corpus}_ngram.db"
+    db_path = ngram_db_path(args, corpus)
     if not os.path.exists(db_path):
         return Response(f"corpus inconnu : {corpus}", status=400)
     fr = args.get("from", "1000")

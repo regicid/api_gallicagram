@@ -662,7 +662,7 @@ def query_tv():
     print(corpus + " " + word)
     return db_df[["n"] + time_steps + ["gram", "total"]].to_csv(index=False)
 
-ngram_tables = ["unigram", "bigram", "trigram", "quadrigram", "pentagram"]
+ngram_tables = ["unigram", "bigram", "trigram", "fourgram", "fivegram"]  # noms écrits par convert_ngram.py
 ngram_steps = ["annee", "mois", "jour"]
 
 @lru_cache(maxsize=None)
@@ -694,6 +694,61 @@ def ngram_time_sql(steps, width, resolution, fr, to):
     exprs = {"annee": f"date / {scale}", "mois": f"date / {max(scale // 100, 1)} % 100", "jour": "date % 100"}
     select = ", ".join(f"{exprs[s]} as {s}" for s in out)
     return select, ", ".join(out), "date between ? and ?", [int(fr[:width]), int(to[:width])]
+
+@lru_cache(maxsize=None)
+def ngram_fields(db_path, table):
+    # Champs propres au corpus (rubrique, revue...) : colonnes qui ne sont ni des mots (w1, w2...), ni du temps,
+    # ni des comptes. Renvoie {champ: {label: code} ou None} ; un champ codé en entier par convert_ngram.py
+    # (--encode) a une table de correspondance du même nom (id, label).
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    cols = [c[1] for c in conn.execute(f"pragma table_info({table})")]
+    tables = {r[0] for r in conn.execute("select name from sqlite_master where type='table'")}
+    fields = {}
+    for c in cols:
+        if re.fullmatch(r"w\d+", c) or c in ngram_steps or c in ("date", "n", "total"):
+            continue
+        fields[c] = dict(conn.execute(f'select label, id from "{c}"')) if c in tables else None
+    conn.close()
+    return fields
+
+# Alias propres à un corpus : filtre -> (champ, {valeur: ensemble de valeurs du champ})
+ngram_field_aliases = {"cairn": {"discipline": ("revue", cairn_disciplines)}}
+
+def ngram_field_values(s, known=()):
+    # Valeurs séparées par ',' ou ';' ('all' = pas de filtre). Des morceaux voisins sont recollés
+    # quand ils forment une valeur connue contenant une virgule (discipline 'Info, Communication').
+    parts = [p.strip() for p in re.split("[,;]", s)]
+    values, i = [], 0
+    while i < len(parts):
+        j = next((j for j in range(len(parts), i + 1, -1) if ", ".join(parts[i:j]).lower() in known), i + 1)
+        values.append(", ".join(parts[i:j]))
+        i = j
+    return {v for v in values if v and v.lower() != "all"}
+
+def ngram_fields_sql(corpus, db_path, table, args):
+    # Filtres optionnels sur les champs du corpus : rubrique=politique,culture ; revue=RFS,ARSS (voir
+    # ngram_field_values). Un paramètre qui ne correspond à aucun champ du corpus est ignoré.
+    # Renvoie (condition à ajouter à la période, params, None) ou (None, None, message d'erreur).
+    fields = ngram_fields(db_path, table)
+    labels = {c: {label.lower(): id for label, id in fields[c].items()} for c in fields if fields[c] is not None}
+    values = {c: ngram_field_values(args.get(c, ""), labels.get(c, ())) for c in fields}
+    for alias, (c, mapping) in ngram_field_aliases.get(corpus, {}).items():
+        for v in ngram_field_values(args.get(alias, ""), mapping):
+            if v.lower() not in mapping:
+                return None, None, f"{alias} inconnu(e) : {v}"
+            values[c] |= mapping[v.lower()]
+    condition, params = "", []
+    for c, vs in values.items():
+        if not vs:
+            continue
+        if c in labels:
+            unknown = {v for v in vs if v.lower() not in labels[c]}
+            if unknown:
+                return None, None, f"{c} inconnu(e) : {', '.join(sorted(unknown))} ; valeurs possibles : {', '.join(fields[c])}"
+            vs = {labels[c][v.lower()] for v in vs}
+        condition += f' and "{c}" in ({",".join("?" * len(vs))})'
+        params += sorted(vs)
+    return condition, params, None
 
 ngram_max_forms = 500000       # nombre max de formes pour un motif joker (*, ?) : ~5 µs par forme sur presse
 ngram_scan_limit = 2 * 10**9   # taille (octets) au-delà de laquelle on refuse les scans complets
@@ -730,6 +785,8 @@ def query_ngram():
     # Dans un n-gramme, '_' remplace n'importe quel mot ('guerre _ l'allemagne') et * / ? servent
     # de jokers dans un mot ('grèv*' additionne grève, grèves, grèvent...) ; chaque série reste une courbe.
     # from/to : AAAA, AAAAMM ou AAAAMMJJ ; resolution : annee, mois ou jour (défaut : la plus fine disponible).
+    # Champs propres au corpus (rubrique sur lemonde_rubriques, revue sur cairn...) : rubrique=politique,culture
+    # restreint comptes et totaux (voir ngram_fields_sql) ; by_rubrique=True sépare les courbes par rubrique.
     # Si la table total_* manque, les totaux viennent des CSV de get_base.
     args = request.args
     corpus = args.get("corpus", "")
@@ -763,6 +820,16 @@ def query_ngram():
         if res not in steps:
             return Response(f"resolution doit être parmi : {', '.join(steps)}", status=400)
         select, group, period, period_params = ngram_time_sql(steps, width, res, fr, to)
+        fields = ngram_fields(db_path, table)
+        condition, field_params, error = ngram_fields_sql(corpus, db_path, table, args)
+        if error:
+            conn.close()
+            return Response(error, status=400)
+        period += condition
+        period_params += field_params
+        by = [c for c in fields if args.get(f"by_{c}", "").lower() in ("true", "1")]
+        select = ", ".join([select] + by)
+        group = ", ".join([group] + by)
         out = group.split(", ")
         # Comptes : une requête par variante (clé primaire w1, w2, ..., temps), sommées ensuite
         counts = []
@@ -777,6 +844,9 @@ def query_ngram():
         if ngram_schema(db_path, f"total_{table}") is not None:
             base = pd.read_sql_query(f"select {select}, sum(total) as total from total_{table} where {period} group by {group}", conn, params=period_params)
         else:
+            if condition or by:
+                conn.close()
+                return Response(f"pas de totaux par {', '.join(fields)} pour le corpus {corpus}", status=400)
             base = get_base(corpus, n)
             if any(s not in base.columns for s in out):
                 return Response(f"pas de totaux à la résolution {res} pour le corpus {corpus}", status=400)
@@ -787,8 +857,12 @@ def query_ngram():
             base = base.groupby(out, as_index=False).total.sum()
         db_df = pd.merge(db_df, base, how="right", on=out)
         db_df.n = db_df.n.fillna(0).astype(int)
+        db_df = db_df.sort_values(out)
+        for c in by:
+            if fields[c] is not None:
+                db_df[c] = db_df[c].map({id: label for label, id in fields[c].items()})
         db_df["gram"] = "+".join(" ".join(w) for w in variants)
-        results.append(db_df.sort_values(out)[["n"] + out + ["gram", "total"]])
+        results.append(db_df[["n"] + out + ["gram", "total"]])
     conn.close()
     print(corpus + " " + args.get("mot", ""))
     return pd.concat(results).to_csv(index=False)
@@ -801,6 +875,10 @@ def ngram_stoplist(args):
     return list(pd.read_csv("/opt/bazoulay/docker_gallicagram/gallicagram/stopwords.csv").monogram.iloc[:int(stopwords)])
 
 ngram_score_methods = ("count", "llr", "pmi", "logdice")
+# Les fréquences propres se lisent dans la table unigram (~1,4 ms par mot sur presse 1789-1950) : on ne note que
+# les mots les plus fréquents du motif, max(1000, 20 * n_joker). Sur guerre _ (presse 1789-1950), les 50 premiers
+# en logDice sont tous dans les 120 premiers en compte brut ; seul pmi, qui favorise les mots rares, peut en pâtir.
+ngram_score_candidates = 1000
 
 def ngram_score_args(args):
     # score et min_count (défaut 20 : les scores d'association sont instables sur les mots rares), ou message d'erreur
@@ -812,12 +890,14 @@ def ngram_score_args(args):
         return None, None, "min_count doit être un entier"
     return score, int(min_count), None
 
-def ngram_score(conn, df, r1, fx, score, period, period_params):
+def ngram_score(conn, df, r1, fx, score, period, period_params, n_joker):
     # Ajoute à df (id, tot) la fréquence propre du mot (freq, table unigram) et le score d'association.
     # Table de contingence : O11 = tot (cooccurrences), R1 = r1 (positions disponibles autour du mot cherché),
     # C1 = freq, N = total des unigrammes sur la période ; fx = fréquence du mot cherché (logDice).
     # llr : log-vraisemblance de Dunning (1993), signée (négative si sous-représenté) ;
     # pmi : log2(O11 / E11) ; logdice : 14 + log2(2 * O11 / (fx + freq)) (Rychlý 2008), max 14.
+    if n_joker != "all":
+        df = df.nlargest(max(ngram_score_candidates, 20 * int(n_joker)), "tot")
     freq = pd.read_sql_query(f"select w1 as id, sum(n) as freq from unigram where w1 in ({','.join(map(str, df.id))}) and {period} group by w1", conn, params=period_params)
     df = df.merge(freq, on="id", how="left").fillna({"freq": 0})
     N = conn.execute(f"select sum(total) from total_unigram where {period}", period_params).fetchone()[0] or 0
@@ -841,6 +921,7 @@ def ngram_pattern(args, words):
     # Classement des n-grammes correspondant à un motif sur une base token {corpus}_ngram.db.
     # Chaque mot est exact, '_' (n'importe quel mot) ou un motif glob avec * et ? ('addict*').
     # stopwords=k écarte les k mots les plus fréquents aux positions '_' et joker.
+    # rubrique=..., revue=... : filtres sur les champs du corpus, comme pour /query_ngram.
     # Renvoie un CSV tot,gram trié par fréquence décroissante sur la période, ou une Response d'erreur.
     # score=llr|pmi|logdice (un seul '_', mots exacts) : classement par association entre le mot en '_' et le reste
     # du motif, parmi les formes vues au moins min_count fois ; renvoie alors tot,gram,freq,score.
@@ -876,6 +957,11 @@ def ngram_pattern(args, words):
         return Response(f"pas de table {table} pour le corpus {corpus}", status=400)
     steps, width = schema
     _, _, period, period_params = ngram_time_sql(steps, width, steps[0], fr, to)
+    condition, field_params, error = ngram_fields_sql(corpus, db_path, table, args)
+    if error:
+        return Response(error, status=400)
+    period += condition
+    period_params += field_params
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conditions, params, error = ngram_words_sql(conn, db_path, words)
     if error:
@@ -891,7 +977,7 @@ def ngram_pattern(args, words):
         r1 = db_df.tot.sum()
         db_df = db_df[(db_df.tot >= min_count) & ~db_df.id.isin(stop_ids)]
         if len(db_df):
-            db_df = ngram_score(conn, db_df, r1, r1, score, period, period_params)
+            db_df = ngram_score(conn, db_df, r1, r1, score, period, period_params, n_joker)
             if n_joker != "all":
                 db_df = db_df.iloc[:int(n_joker)]
             tokens = pd.read_sql_query(f"select id, word from token where id in ({','.join(map(str, db_df.id))})", conn)
@@ -986,6 +1072,11 @@ def associated_ngram():
         return Response(f"pas de table {table} pour le corpus {corpus}", status=400)
     steps, width = schema
     _, _, period, period_params = ngram_time_sql(steps, width, steps[0], fr, to)
+    condition, field_params, error = ngram_fields_sql(corpus, db_path, table, args)
+    if error:
+        return Response(error, status=400)
+    period += condition
+    period_params += field_params
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     ids = [conn.execute("select id from token where word=?", (w,)).fetchone() for w in words]
     counts = []
@@ -1010,7 +1101,7 @@ def associated_ngram():
             fx = conn.execute(f"select sum(n) from {ngram_tables[k - 1]} where {' and '.join(f'w{j+1}=?' for j in range(k))} and {period}", ids + period_params).fetchone()[0] or 0
             db_df = db_df[db_df.tot >= min_count]
             if len(db_df):
-                db_df = ngram_score(conn, db_df, r1, fx, score, period, period_params)
+                db_df = ngram_score(conn, db_df, r1, fx, score, period, period_params, n_joker)
         # Les mots ne sont résolus que par paquets, dans l'ordre, jusqu'à avoir n_joker mots retenus :
         # sur presse, résoudre tous les ids de la fenêtre dans la table token coûte plusieurs secondes
         step = 30000 if limit is None else max(2 * (limit + len(stoplist)), 1000)

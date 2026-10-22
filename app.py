@@ -13,6 +13,7 @@ from functools import lru_cache
 from flask_cors import CORS
 import requests
 import os
+from mots_du_jour import mots_du_jour as calcul_mots_du_jour
 
 app = Flask(__name__)
 CORS(app)
@@ -94,7 +95,7 @@ def get_base(corpus,n):
 def process_input_words(words_input):
     input_words = [w.strip() for w in words_input.split(',')]
     words_to_search = []
-    vowels = 'aeiouàâéèêëîïôùûü'
+    vowels = 'aeiouyàâäéèêëîïôöùûüÿœæh'
     for word in input_words:
         words_to_search.append(word)
         if word[0].lower() in vowels:
@@ -662,12 +663,46 @@ def query_tv():
     print(corpus + " " + word)
     return db_df[["n"] + time_steps + ["gram", "total"]].to_csv(index=False)
 
-ngram_dirs = {False: "/opt/bazoulay/ngram", True: "/opt/bazoulay/stage-mids/data"}
+ngram_dir = "/opt/bazoulay/ngram"
+elias_dir = "/opt/bazoulay/stage-mids/bases"
 
-def ngram_db_path(args, corpus):
-    # elias=true : bases de presse web contemporaine (stage-mids/data) au lieu de /opt/bazoulay/ngram
-    elias = args.get("elias", "false").lower() in ("true", "1")
-    return f"{ngram_dirs[elias]}/{corpus}_ngram.db"
+def ngram_bases(args, corpus):
+    # Bases d'un corpus : [{corpus}_ngram.db] dans ngram_dir, ou avec elias=true (presse web contemporaine,
+    # mise à jour continue de stage-mids) la grosse base + les tampons donnés par version.json, relu à chaque
+    # requête (la fusion mensuelle le remplace d'un coup). Liste vide si le corpus est inconnu.
+    if args.get("elias", "false").lower() not in ("true", "1"):
+        path = f"{ngram_dir}/{corpus}_ngram.db"
+        return [path] if os.path.exists(path) else []
+    with open(f"{elias_dir}/version.json") as f:
+        e = json.load(f).get(corpus)
+    return [f"{elias_dir}/{b}" for b in [e["grosse"], *e["tampons"]]] if e else []
+
+def ngram_connect(bases):
+    # Connexion en lecture seule à la première base ; les suivantes (tampons) sont attachées en t0, t1...
+    # Les ids viennent du registre commun de stage-mids : un mot a le même id dans toutes les bases, et figure
+    # dans la table token de chacune où il apparaît. La vue temporaire token (prioritaire sur main.token)
+    # les réunit sans doublon ; les tables de comptes sont réunies par ngram_from.
+    conn = sqlite3.connect(f"file:{bases[0]}?mode=ro", uri=True)
+    schemas = ["main"] + [f"t{k}" for k in range(len(bases) - 1)]
+    for s, b in zip(schemas[1:], bases[1:]):
+        conn.execute(f"attach ? as {s}", (f"file:{b}?mode=ro",))
+    if len(schemas) > 1:
+        conn.execute("create temp view token as " + " union all ".join(
+            f"select id, word from {s}.token" + "".join(f"{' where' if j == 0 else ' and'} id not in (select id from {p}.token)" for j, p in enumerate(schemas[:k]))
+            for k, s in enumerate(schemas)))
+    # Une seule transaction de lecture : comptes et totaux voient le même état, même si un ajout
+    # est validé dans un tampon (mode WAL) pendant la requête
+    conn.execute("begin")
+    return conn
+
+def ngram_from(conn, table, where, params):
+    # Clause "from table where ..." et ses paramètres. Avec des tampons attachés, une sous-requête par base,
+    # mises bout à bout (les comptes sont ensuite sommés par le group by) : une vue UNION ALL ne convient pas,
+    # SQLite n'y pousse pas une condition contenant une sous-requête (w1 in (select ...) -> scan complet).
+    schemas = [r[1] for r in conn.execute("pragma database_list") if r[1] != "temp"]
+    if len(schemas) == 1:
+        return f"from {table} where {where}", params
+    return "from (" + " union all ".join(f"select * from {s}.{table} where {where}" for s in schemas) + ")", params * len(schemas)
 
 ngram_tables = ["unigram", "bigram", "trigram", "fourgram", "fivegram"]  # noms écrits par convert_ngram.py
 ngram_steps = ["annee", "mois", "jour"]
@@ -757,6 +792,8 @@ def ngram_fields_sql(corpus, db_path, table, args):
         params += sorted(vs)
     return condition, params, None
 
+ngram_elision = tuple("aeiouyàâäéèêëîïôöùûüÿœæh")  # 'orange' compte aussi 'l'orange', comme /query
+
 ngram_max_forms = 500000       # nombre max de formes pour un motif joker (*, ?) : ~5 µs par forme sur presse
 ngram_scan_limit = 2 * 10**9   # taille (octets) au-delà de laquelle on refuse les scans complets
 
@@ -770,8 +807,21 @@ def ngram_words_sql(conn, db_path, words):
     if os.path.getsize(db_path) > ngram_scan_limit and (words[0] == "_" or words[0][:1] in "*?"):
         return None, None, "sur ce corpus, le premier mot ne peut pas être '_' ni commencer par * ou ?"
     conditions, params = [], []
+    table = ngram_tables[len(words) - 1]
     for i, w in enumerate(words):
         if w == "_":
+            continue
+        if ("*" in w or "?" in w) and len(conditions) == i > 0:
+            # Mots précédents tous fixés : candidats = mots vus à cette position après eux (préfixe de la clé
+            # primaire), filtrés par le motif. Sur presse, 'droit d*' : 34 000 candidats en 0,6 s, contre
+            # 40 millions de formes d* dans token (2 min)
+            sql, sql_params = ngram_from(conn, table, " and ".join(conditions), list(params))
+            ids = [r[0] for r in conn.execute(
+                f"select t.id from (select distinct w{i+1} as id {sql}) c cross join token t on t.id=c.id where t.word glob ?",
+                sql_params + [w])]
+            if len(ids) > ngram_max_forms:
+                return None, None, f"le motif {w} correspond à plus de {ngram_max_forms} formes, le préciser"
+            conditions.append(f"w{i+1} in ({','.join(map(str, ids)) or '-1'})")
             continue
         if "*" in w or "?" in w:
             forms = conn.execute("select count(*) from (select 1 from token where word glob ? limit ?)", (w, ngram_max_forms + 1)).fetchone()[0]
@@ -795,13 +845,16 @@ def query_ngram():
     # Champs propres au corpus (rubrique sur lemonde_rubriques, revue sur cairn...) : rubrique=politique,culture
     # restreint comptes et totaux (voir ngram_fields_sql) ; by_rubrique=True sépare les courbes par rubrique.
     # Si la table total_* manque, les totaux viennent des CSV de get_base.
+    # Un n-gramme dont le premier mot commence par une voyelle ou un h compte aussi sa forme élidée
+    # ('orange' -> orange + l'orange, 'histoire de' -> + l'histoire de) ; la série garde le nom saisi.
     args = request.args
     corpus = args.get("corpus", "")
     if not re.fullmatch(r"[a-z0-9_]+", corpus):
         return Response("corpus invalide", status=400)
-    db_path = ngram_db_path(args, corpus)
-    if not os.path.exists(db_path):
+    bases = ngram_bases(args, corpus)
+    if not bases:
         return Response(f"corpus inconnu : {corpus}", status=400)
+    db_path = bases[0]  # schéma, champs et taille : ceux de la grosse base
     fr = args.get("from", "1000")
     to = args.get("to", "2100")
     if not (fr.isdigit() and to.isdigit() and len(fr) in (4, 6, 8) and len(to) in (4, 6, 8)):
@@ -812,7 +865,7 @@ def query_ngram():
     if not all(v and all(0 < len(w) <= len(ngram_tables) for w in v) for v in series):
         return Response(f"mot doit contenir entre 1 et {len(ngram_tables)} mots par n-gramme", status=400)
     resolution = args.get("resolution", "default")
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = ngram_connect(bases)
     results = []
     for variants in series:
         n = len(variants[0])
@@ -839,17 +892,22 @@ def query_ngram():
         group = ", ".join([group] + by)
         out = group.split(", ")
         # Comptes : une requête par variante (clé primaire w1, w2, ..., temps), sommées ensuite
+        series_label = "+".join(" ".join(w) for w in variants)
+        elided = [["l'" + w[0]] + w[1:] for w in variants if w[0].startswith(ngram_elision)]
+        variants = variants + [w for w in elided if w not in variants]
         counts = []
         for words in variants:
             conditions, params, error = ngram_words_sql(conn, db_path, words)
             if error:
                 conn.close()
                 return Response(error, status=400)
-            counts.append(pd.read_sql_query(f"select {select}, sum(n) as n from {table} where {' and '.join(conditions)} and {period} group by {group}", conn, params=params + period_params))
+            sql, sql_params = ngram_from(conn, table, f"{' and '.join(conditions)} and {period}", params + period_params)
+            counts.append(pd.read_sql_query(f"select {select}, sum(n) as n {sql} group by {group}", conn, params=sql_params))
         db_df = pd.concat(counts).groupby(out, as_index=False).n.sum() if counts else pd.DataFrame(columns=out + ["n"])
         # Totaux
         if ngram_schema(db_path, f"total_{table}") is not None:
-            base = pd.read_sql_query(f"select {select}, sum(total) as total from total_{table} where {period} group by {group}", conn, params=period_params)
+            sql, sql_params = ngram_from(conn, f"total_{table}", period, period_params)
+            base = pd.read_sql_query(f"select {select}, sum(total) as total {sql} group by {group}", conn, params=sql_params)
         else:
             if condition or by:
                 conn.close()
@@ -868,7 +926,7 @@ def query_ngram():
         for c in by:
             if fields[c] is not None:
                 db_df[c] = db_df[c].map({id: label for label, id in fields[c].items()})
-        db_df["gram"] = "+".join(" ".join(w) for w in variants)
+        db_df["gram"] = series_label
         results.append(db_df[["n"] + out + ["gram", "total"]])
     conn.close()
     print(corpus + " " + args.get("mot", ""))
@@ -905,9 +963,11 @@ def ngram_score(conn, df, r1, fx, score, period, period_params, n_joker):
     # pmi : log2(O11 / E11) ; logdice : 14 + log2(2 * O11 / (fx + freq)) (Rychlý 2008), max 14.
     if n_joker != "all":
         df = df.nlargest(max(ngram_score_candidates, 20 * int(n_joker)), "tot")
-    freq = pd.read_sql_query(f"select w1 as id, sum(n) as freq from unigram where w1 in ({','.join(map(str, df.id))}) and {period} group by w1", conn, params=period_params)
+    sql, sql_params = ngram_from(conn, "unigram", f"w1 in ({','.join(map(str, df.id))}) and {period}", period_params)
+    freq = pd.read_sql_query(f"select w1 as id, sum(n) as freq {sql} group by w1", conn, params=sql_params)
     df = df.merge(freq, on="id", how="left").fillna({"freq": 0})
-    N = conn.execute(f"select sum(total) from total_unigram where {period}", period_params).fetchone()[0] or 0
+    sql, sql_params = ngram_from(conn, "total_unigram", period, period_params)
+    N = conn.execute(f"select sum(total) {sql}", sql_params).fetchone()[0] or 0
     o11, c1 = df.tot.astype(float).values, np.maximum(df.freq.astype(float).values, df.tot.values)
     e11 = r1 * c1 / N
     if score == "pmi":
@@ -927,7 +987,7 @@ def ngram_score(conn, df, r1, fx, score, period, period_params, n_joker):
 def ngram_pattern(args, words):
     # Classement des n-grammes correspondant à un motif sur une base token {corpus}_ngram.db.
     # Chaque mot est exact, '_' (n'importe quel mot) ou un motif glob avec * et ? ('addict*').
-    # stopwords=k écarte les k mots les plus fréquents aux positions '_' et joker.
+    # stopwords=k écarte les k mots les plus fréquents aux positions '_' ; un joker (d*) fait partie de la requête et n'est pas filtré.
     # rubrique=..., revue=... : filtres sur les champs du corpus, comme pour /query_ngram.
     # Renvoie un CSV tot,gram trié par fréquence décroissante sur la période, ou une Response d'erreur.
     # score=llr|pmi|logdice (un seul '_', mots exacts) : classement par association entre le mot en '_' et le reste
@@ -935,9 +995,10 @@ def ngram_pattern(args, words):
     corpus = args.get("corpus", "")
     if not re.fullmatch(r"[a-z0-9_]+", corpus):
         return Response("corpus invalide", status=400)
-    db_path = ngram_db_path(args, corpus)
-    if not os.path.exists(db_path):
+    bases = ngram_bases(args, corpus)
+    if not bases:
         return Response(f"corpus inconnu : {corpus}", status=400)
+    db_path = bases[0]  # schéma, champs et taille : ceux de la grosse base
     n = len(words)
     if not 0 < n <= len(ngram_tables):
         return Response(f"le motif doit contenir entre 1 et {len(ngram_tables)} mots", status=400)
@@ -969,18 +1030,19 @@ def ngram_pattern(args, words):
         return Response(error, status=400)
     period += condition
     period_params += field_params
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = ngram_connect(bases)
     conditions, params, error = ngram_words_sql(conn, db_path, words)
     if error:
         conn.close()
         return Response(error, status=400)
     stop_ids = [r[0] for r in conn.execute(f"select id from token where word in ({','.join('?' * len(stoplist))})", stoplist)] if stoplist else []
-    stop_conditions = [f"w{i+1} not in ({','.join(map(str, stop_ids))})" for i, w in enumerate(words) if w == "_" or "*" in w or "?" in w] if stop_ids else []
+    stop_conditions = [f"w{i+1} not in ({','.join(map(str, stop_ids))})" for i, w in enumerate(words) if w == "_"] if stop_ids else []
     if score != "count":
         j = words.index("_") + 1
         # Une seule lecture des n-grammes du motif : r1 = fx = nombre d'occurrences du motif,
         # toutes formes en '_' comprises (mots vides inclus) ; mots vides et min_count filtrés ensuite
-        db_df = pd.read_sql_query(f"select w{j} as id, sum(n) as tot from {table} where {' and '.join(conditions)} and {period} group by w{j}", conn, params=params + period_params)
+        sql, sql_params = ngram_from(conn, table, f"{' and '.join(conditions)} and {period}", params + period_params)
+        db_df = pd.read_sql_query(f"select w{j} as id, sum(n) as tot {sql} group by w{j}", conn, params=sql_params)
         r1 = db_df.tot.sum()
         db_df = db_df[(db_df.tot >= min_count) & ~db_df.id.isin(stop_ids)]
         if len(db_df):
@@ -995,13 +1057,15 @@ def ngram_pattern(args, words):
         return (db_df if len(db_df) else pd.DataFrame(columns=["tot", "gram", "freq", "score"]))[["tot", "gram", "freq", "score"]].to_csv(index=False)
     conditions += stop_conditions
     w_cols = ", ".join(f"w{i+1}" for i in range(n))
-    gram = " || ' ' || ".join(f"t{i+1}.word" for i in range(n))
-    joins = " ".join(f"join token t{i+1} on t{i+1}.id=g.w{i+1}" for i in range(n))
+    # Mots résolus par sous-requête plutôt que par jointure : avec des tampons, token est une vue UNION ALL
+    # qu'une jointure par position démultiplie (2^n branches recalculant chacune g)
+    gram = " || ' ' || ".join(f"(select word from token where id=g.w{i+1})" for i in range(n))
     limit = "" if n_joker == "all" else f"limit {int(n_joker)}"
+    sql, sql_params = ngram_from(conn, table, f"{' and '.join(conditions)} and {period}", params + period_params)
     db_df = pd.read_sql_query(
-        f"select g.tot, {gram} as gram from (select {w_cols}, sum(n) as tot from {table} "
-        f"where {' and '.join(conditions)} and {period} group by {w_cols} order by tot desc {limit}) g {joins} order by g.tot desc",
-        conn, params=params + period_params)
+        f"select g.tot, {gram} as gram from (select {w_cols}, sum(n) as tot {sql} "
+        f"group by {w_cols} order by tot desc {limit}) g order by g.tot desc",
+        conn, params=sql_params)
     conn.close()
     print(corpus + " " + " ".join(words))
     return db_df.to_csv(index=False)
@@ -1042,9 +1106,10 @@ def associated_ngram():
     corpus = args.get("corpus", "")
     if not re.fullmatch(r"[a-z0-9_]+", corpus):
         return Response("corpus invalide", status=400)
-    db_path = ngram_db_path(args, corpus)
-    if not os.path.exists(db_path):
+    bases = ngram_bases(args, corpus)
+    if not bases:
         return Response(f"corpus inconnu : {corpus}", status=400)
+    db_path = bases[0]  # schéma, champs et taille : ceux de la grosse base
     fr = args.get("from", "1000")
     to = args.get("to", "2100")
     if not (fr.isdigit() and to.isdigit() and len(fr) in (4, 6, 8) and len(to) in (4, 6, 8)):
@@ -1084,7 +1149,7 @@ def associated_ngram():
         return Response(error, status=400)
     period += condition
     period_params += field_params
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = ngram_connect(bases)
     ids = [conn.execute("select id from token where word=?", (w,)).fetchone() for w in words]
     counts = []
     if all(ids):
@@ -1094,7 +1159,8 @@ def associated_ngram():
             fixed = range(offset + 1, offset + k + 1)
             free = [f"w{j}" for j in range(1, length + 1) if j not in fixed]
             w_condition = " and ".join(f"w{j}=?" for j in fixed)
-            df = pd.read_sql_query(f"select {', '.join(free)}, sum(n) as tot from {table} where {w_condition} and {period} group by {', '.join(free)}", conn, params=ids + period_params)
+            sql, sql_params = ngram_from(conn, table, f"{w_condition} and {period}", ids + period_params)
+            df = pd.read_sql_query(f"select {', '.join(free)}, sum(n) as tot {sql} group by {', '.join(free)}", conn, params=sql_params)
             # Chaque mot de la fenêtre reçoit le compte du n-gramme
             counts += [df[[w, "tot"]].rename(columns={w: "id"}) for w in free]
     limit = None if n_joker == "all" else int(n_joker)
@@ -1105,7 +1171,8 @@ def associated_ngram():
         r1 = db_df.tot.sum()
         db_df = db_df[~db_df.id.isin(ids)].sort_values("tot", ascending=False)
         if score != "count":
-            fx = conn.execute(f"select sum(n) from {ngram_tables[k - 1]} where {' and '.join(f'w{j+1}=?' for j in range(k))} and {period}", ids + period_params).fetchone()[0] or 0
+            sql, sql_params = ngram_from(conn, ngram_tables[k - 1], f"{' and '.join(f'w{j+1}=?' for j in range(k))} and {period}", ids + period_params)
+            fx = conn.execute(f"select sum(n) {sql}", sql_params).fetchone()[0] or 0
             db_df = db_df[db_df.tot >= min_count]
             if len(db_df):
                 db_df = ngram_score(conn, db_df, r1, fx, score, period, period_params, n_joker)
@@ -1128,6 +1195,52 @@ def associated_ngram():
         db_df = db_df.iloc[:limit]
     print("associated " + corpus + " " + " ".join(words))
     return db_df.to_csv(index=False)
+
+@app.route("/mots_du_jour_ngram")
+def mots_du_jour_ngram():
+    # Mots du jour de la presse web contemporaine (bases elias de stage-mids) : mots en excès sur une période
+    # par rapport aux `ref` mois qui précèdent son mois de début, groupés en sujets. Méthode : voir mots_du_jour.py.
+    # corpus : médias séparés par ',' (défaut : tous ceux de version.json) ; from/to : AAAAMMJJ
+    # (défaut : les 7 derniers jours complets) ; ref : mois de référence (défaut 12) ; min_titres : nombre de
+    # titres où le mot doit être en excès (défaut 5, ramené au nombre de titres disponibles) ; z_min : seuil
+    # d'excès dans un titre (défaut 5) ; min_n : occurrences minimales sur la période (défaut 10) ;
+    # ratio_min : rapport minimal entre taux sur la période et taux de référence (défaut 1.5) ;
+    # top : mots retenus (défaut 80) ; seuil : corrélation minimale pour grouper deux sujets (défaut 0.4) ;
+    # tendance : séries comparées telles quelles (niveau), en écarts d'un jour à l'autre (diff) ou en écart
+    # à la moyenne mobile sur 7 jours (passe_haut, défaut) ; seuil_articles : avec moins de 3 titres réguliers,
+    # Le Monde jusqu'à 2022 est regroupé par articles communs (champ regroupement='articles'), seuil propre (défaut 0.3).
+    # network=true : ajoute noeuds (mot, groupe = rang dans groupes, score, n) et liens (source, cible, poids, type :
+    # articles, grille ou bigramme) pour un affichage en réseau.
+    # Renvoie du JSON : groupes (étiquettes tirées des bigrammes, mots avec score, titres en excès, comptes).
+    args = request.args
+    corpora = [c for c in args.get("corpus", "").split(",") if c]
+    if not all(re.fullmatch(r"[a-z0-9_]+", c) for c in corpora):
+        return Response("corpus invalide", status=400)
+    hier = pd.Timestamp.today().normalize() - pd.Timedelta(days=1)
+    fr = args.get("from", (hier - pd.Timedelta(days=6)).strftime("%Y%m%d"))
+    to = args.get("to", hier.strftime("%Y%m%d"))
+    if not (re.fullmatch(r"\d{8}", fr) and re.fullmatch(r"\d{8}", to)):
+        return Response("from/to doivent être au format AAAAMMJJ", status=400)
+    try:
+        params = dict(ref=int(args.get("ref", 12)), min_titres=int(args.get("min_titres", 5)),
+                      z_min=float(args.get("z_min", 5)), min_n=int(args.get("min_n", 10)),
+                      ratio_min=float(args.get("ratio_min", 1.5)),
+                      top=int(args.get("top", 80)), seuil=float(args.get("seuil", 0.4)),
+                      tendance=args.get("tendance", "passe_haut"),
+                      seuil_articles=float(args.get("seuil_articles", 0.3)),
+                      network=args.get("network", "false").lower() in ("true", "1"))
+    except ValueError:
+        return Response("ref, min_titres, min_n et top doivent être des entiers ; z_min, ratio_min, seuil et seuil_articles des nombres", status=400)
+    if not (1 <= params["ref"] <= 120 and params["min_titres"] >= 1 and 1 <= params["top"] <= 300):
+        return Response("ref doit être entre 1 et 120, min_titres >= 1, top entre 1 et 300", status=400)
+    if params["tendance"] not in ("niveau", "diff", "passe_haut"):
+        return Response("tendance doit être niveau, diff ou passe_haut", status=400)
+    try:
+        resultat = calcul_mots_du_jour(corpora or None, fr, to, **params)
+    except ValueError as e:
+        return Response(str(e), status=400)
+    print("mots_du_jour " + ",".join(corpora or ["tous"]) + f" {fr}-{to} {resultat['duree_s']}s")
+    return jsonify(resultat)
 
 corpus_rap =pd.read_csv("~/LRFAF/corpus.csv")
 

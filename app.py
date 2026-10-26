@@ -221,62 +221,6 @@ def query():
     # Instead of setting gram column to words_input, we'll ensure it's correctly populated in process_results
     return db_df.to_csv(index=False)
 
-@app.route('/contain')
-def contain():
-    args = request.args
-    try:
-        corpus=args["corpus"]
-    except:
-        corpus="lemonde"
-    print(corpus)
-    mot1 = args.get("mot1").replace("'","").lower()
-    mot2 = args.get("mot2").replace("'","").lower()
-    base = "gram"
-    try:
-        fr = args["from"]
-    except:
-        fr=1789
-    try:
-        to = args["to"]
-    except:
-        to=2022
-    try:
-        count = args["count"]
-    except:
-        count = "True"
-    try:
-        resolution = args["resolution"]
-    except:
-        resolution = "default"
-
-    if corpus=="presse":
-        n=3
-        time_steps = "annee,mois"
-    if corpus=="livres":
-        n=3
-        time_steps = "annee"
-    if corpus=="lemonde":
-        n=4
-        time_steps = "annee,mois"
-        base = "gram_mois"
-    conn = get_db(corpus,n)
-    if count=="True":
-        db_df = pd.read_sql_query(f"SELECT sum(n) as n,{time_steps} FROM {base} where rowid in (select rowid from full_text where gram match '{mot1} AND {mot2}') and annee between {fr} and {to} group by {time_steps}",conn)
-    else:
-        db_df = pd.read_sql_query(f"SELECT sum(n) as n,gram,{time_steps} FROM {base} where rowid in (select rowid from full_text where gram match '{mot1} AND {mot2}') and annee between {fr} and {to} group by gram,{time_steps}",conn)
-    conn.close()
-    base = get_base(corpus,n)
-    if corpus=="lemonde":base = base.groupby(["annee","mois"]).agg({'total':'sum'}).reset_index()
-    base = base.loc[(base.annee>=int(fr))&(base.annee<=int(to))]
-    db_df = pd.merge(db_df,base,how="right")
-    db_df.n = db_df.n.fillna(0)
-    corpus_journaliers = ["lemonde","huma","paris","figaro","moniteur","temps","petit_journal","constitutionnel","journal_des_debats","la_presse","petit_parisien"]
-    if resolution=="mois" and corpus in corpus_journaliers + ["presse","ddb"]:db_df = db_df.groupby(["annee","mois"]).agg({'n':'sum','total':'sum'}).reset_index()
-    if resolution=="annee": db_df = db_df.groupby(["annee"]).agg({'total':'sum','n':'sum'}).reset_index()
-    if count=="True":db_df["gram"] = mot1 + "&" + mot2
-    print(mot1 + "&" + mot2)
-    return db_df.to_csv(index=False)
-
 @app.route("/joker")
 def joker():
     args = request.args
@@ -931,6 +875,112 @@ def query_ngram():
     conn.close()
     print(corpus + " " + args.get("mot", ""))
     return pd.concat(results).to_csv(index=False)
+
+# /contain : nombre de fenêtres de W mots contenant deux mots, sur les bases token {corpus}_ngram.db (et les
+# bases de stage-mids avec elias=true). L'ancienne route lisait le texte des n-grammes avec un index FTS
+# (4gram_lemonde.db, 3gram_presse.db, 3gram.db), dont celui de Le Monde a disparu.
+# Les bases token ne s'interrogent vite qu'en fixant le premier mot (clé primaire w1, w2, ...), et elles sont
+# élaguées des n-grammes rares ('guerre froide X' disparaît bien plus que 'la guerre froide') : on ne peut pas
+# retrouver les fenêtres en ne regardant que celles qui commencent par l'un des mots. On compte donc les paires
+# à chaque distance dans le plus petit n-gramme qui les contient (bigram pour des mots voisins, trigram pour un
+# mot d'écart...), dans les deux ordres, et une paire à distance d compte pour les W - d fenêtres de W mots qui
+# la contiennent : n est un nombre de W-grammes, rapporté au total des W-grammes, comme l'ancienne route.
+# La fenêtre maximale est le plus long n-gramme de la base (2 à 5 selon le corpus).
+# lemonde : la base lemonde_ngram.db s'arrête aux 3-grammes ; on prend lemonde_rubriques_ngram.db, qui couvre
+# tout le journal (1944-2024) jusqu'aux 5-grammes, en sommant les rubriques.
+contain_corpus_db = {"lemonde": "lemonde_rubriques"}
+# Fenêtre par défaut de l'ancienne route : 4 sur Le Monde, 3 ailleurs (presse, livres) ; bornée par la base
+contain_default_window = {"lemonde": 4, "lemonde_rubriques": 4}
+# L'index FTS coupait aux apostrophes : 'europe' trouvait aussi l'europe, d'europe...
+contain_elisions = ("l'", "d'", "qu'", "n'", "s'", "j'", "m'", "t'", "c'", "jusqu'", "lorsqu'", "puisqu'")
+
+@app.route("/contain")
+@app.route("/contain_ngram")
+def contain():
+    # mot1, mot2 : un mot chacun. from/to : AAAA, AAAAMM ou AAAAMMJJ ; resolution : annee, mois ou jour
+    # (défaut : la plus fine disponible). window : taille de la fenêtre en mots, de 2 au plus long n-gramme
+    # de la base (défaut 4 sur Le Monde, 3 ailleurs). count=False : une ligne par n-gramme trouvé
+    # ('guerre _ froide') au lieu de la somme. Champs du corpus comme pour /query_ngram : rubrique=politique,culture
+    # restreint comptes et totaux, by_rubrique=True sépare les courbes (sauf corpus=lemonde, qui somme tout).
+    args = request.args
+    corpus = args.get("corpus", "lemonde")
+    if not re.fullmatch(r"[a-z0-9_]+", corpus):
+        return Response("corpus invalide", status=400)
+    elias = args.get("elias", "false").lower() in ("true", "1")
+    bases = ngram_bases(args, corpus if elias else contain_corpus_db.get(corpus, corpus))
+    if not bases:
+        return Response(f"corpus inconnu : {corpus}", status=400)
+    db_path = bases[0]
+    mots = [args.get(k, "").strip().lower() for k in ("mot1", "mot2")]
+    if not all(mots) or any(len(m.split()) != 1 for m in mots):
+        return Response("mot1 et mot2 doivent contenir un mot chacun", status=400)
+    fr, to = args.get("from", "1000"), args.get("to", "2100")
+    if not (fr.isdigit() and to.isdigit() and len(fr) in (4, 6, 8) and len(to) in (4, 6, 8)):
+        return Response("from/to doivent être au format AAAA, AAAAMM ou AAAAMMJJ", status=400)
+    fr, to = fr.ljust(8, "0"), to + "9" * (8 - len(to))
+    tables = [t for t in ngram_tables[1:] if ngram_schema(db_path, t) and ngram_schema(db_path, f"total_{t}")]
+    max_window = len(tables) + 1 if tables == ngram_tables[1:len(tables) + 1] else 0
+    if max_window < 2:
+        return Response(f"pas de bigrammes pour le corpus {corpus}", status=400)
+    window = args.get("window", str(min(contain_default_window.get(corpus, 3), max_window)))
+    if not window.isdigit() or not 2 <= int(window) <= max_window:
+        return Response(f"window doit être entre 2 et {max_window} pour le corpus {corpus}", status=400)
+    window = int(window)
+    table_w = ngram_tables[window - 1]
+    steps, width = ngram_schema(db_path, table_w)
+    resolution = args.get("resolution", "default")
+    res = steps[-1] if resolution == "default" else resolution
+    if res not in steps:
+        return Response(f"resolution doit être parmi : {', '.join(steps)}", status=400)
+    select, group, period, period_params = ngram_time_sql(steps, width, res, fr, to)
+    fields = ngram_fields(db_path, table_w)
+    by = []
+    if corpus not in contain_corpus_db or elias:
+        condition, field_params, error = ngram_fields_sql(corpus, db_path, table_w, args)
+        if error:
+            return Response(error, status=400)
+        period += condition
+        period_params += field_params
+        by = [c for c in fields if args.get(f"by_{c}", "").lower() in ("true", "1")]
+    out = group.split(", ") + by
+    select = ", ".join([select] + by)
+    group = ", ".join(out)
+    count = args.get("count", "True").lower() not in ("false", "0")
+    conn = ngram_connect(bases)
+    ids = []
+    for m in mots:
+        forms = [m] + ([e + m for e in contain_elisions] if m.startswith(ngram_elision) else [])
+        ids.append(dict(conn.execute(f"select id, word from token where word in ({','.join('?' * len(forms))})", forms)))
+    counts = []
+    for first, second in ((ids[0], ids[1]), (ids[1], ids[0])):
+        if not first or not second:
+            continue
+        for k in range(2, window + 1):
+            # Mots à distance k - 1 : k-gramme w1 ... wk, compté dans window - (k - 1) fenêtres
+            table, weight = ngram_tables[k - 1], window - k + 1
+            words = f"w1 in ({','.join(map(str, first))}) and w{k} in ({','.join(map(str, second))})"
+            sql, sql_params = ngram_from(conn, table, f"{words} and {period}", list(period_params))
+            df = pd.read_sql_query(f"select {select}, w1, w{k} as wk, sum(n) * {weight} as n {sql} group by {group}, w1, w{k}", conn, params=sql_params)
+            df["gram"] = df.w1.map(first) + " " + "_ " * (k - 2) + df.wk.map(second)
+            counts.append(df.drop(columns=["w1", "wk"]))
+    sql, sql_params = ngram_from(conn, f"total_{table_w}", period, period_params)
+    base = pd.read_sql_query(f"select {select}, sum(total) as total {sql} group by {group}", conn, params=sql_params)
+    conn.close()
+    db_df = pd.concat(counts) if counts else pd.DataFrame(columns=out + ["gram", "n"])
+    if count:
+        db_df = db_df.groupby(out, as_index=False).n.sum()
+        db_df = pd.merge(db_df, base, how="right", on=out)
+        db_df["gram"] = mots[0] + "&" + mots[1]
+    else:
+        db_df = db_df.groupby(out + ["gram"], as_index=False).n.sum()
+        db_df = pd.merge(db_df, base, how="left", on=out)
+    db_df.n = db_df.n.fillna(0).astype(int)
+    db_df = db_df.sort_values(out)
+    for c in by:
+        if fields[c] is not None:
+            db_df[c] = db_df[c].map({id: label for label, id in fields[c].items()})
+    print(corpus + " " + mots[0] + "&" + mots[1])
+    return db_df[["n"] + out + ["total", "gram"]].to_csv(index=False)
 
 def ngram_stoplist(args):
     # Les `stopwords` mots les plus fréquents (liste de /associated), ou None si le paramètre est invalide

@@ -1452,8 +1452,13 @@ def rankings_portraits():
     # extremisme, dynamique, journaliste, valence_nm) ; order : desc (défaut) ou asc.
     # valence_nm a ses propres poids (W_nm, WW_nm), qui remplacent W et WW dans les formules ci-dessus.
     # Avec des bornes en années entières, les sommes viennent de cells_year (rapide), sinon de cells.
+    # Rubriques : main_section (rubrique où la personne a le plus d'articles), section_share (part de ses articles
+    # dans les rubriques demandées, même période et mêmes journaux), section_lift (section_share rapportée à la
+    # part de ces rubriques pour tout le monde) et off_section (section_lift < off_section_lift, défaut 0.25 :
+    # personne citée dans la rubrique sans en relever, comme Poutine en sport ; toujours faux sans filtre section).
     # Renvoie du CSV : name, key, n_articles, n_mentions, n_segments, puis pour chaque score
-    # {score}_mean, {score}_se, {score}_low, {score}_high (intervalle à 95 %), {score}_expected, trié par {score}_mean.
+    # {score}_mean, {score}_se, {score}_low, {score}_high (intervalle à 95 %), {score}_expected, puis main_section,
+    # section_share, section_lift, off_section ; trié par {score}_mean.
     args = request.args
     try:
         seuil = int(args.get("min", 100))
@@ -1468,7 +1473,12 @@ def rankings_portraits():
     filtres = portraits_filtres_args(args)
     if isinstance(filtres, str):
         return Response(filtres, status=400)
+    try:
+        seuil_rubrique = float(args.get("off_section_lift", 0.25))
+    except ValueError:
+        return Response("off_section_lift doit être un nombre", status=400)
     out = portraits_classement(filtres, seuil, os.path.getmtime(portraits_db))
+    out = out.assign(off_section=out["section_lift"] < seuil_rubrique)
     out = out.sort_values(f"{score}_mean", ascending=(order == "asc"))
     return out.to_csv(index=False)
 
@@ -1520,6 +1530,26 @@ def portraits_classement(filtres, seuil, mtime):
             se = np.sqrt(np.clip(var, 0, None) * n / np.maximum(n - 1, 1))
             out[f"{s}_mean"], out[f"{s}_se"], out[f"{s}_low"], out[f"{s}_high"] = r, se, r - 1.96 * se, r + 1.96 * se
             out[f"{s}_expected"] = df[f"E_{s}"].to_numpy() / df[f"EW_{s}"].to_numpy()
+    # Appartenance aux rubriques demandées : articles de la personne par rubrique, sur la même période et les
+    # mêmes journaux mais toutes rubriques confondues. section_share : part de ses articles dans les rubriques
+    # demandées ; section_lift : cette part rapportée à celle de tout le monde (1 = autant que la moyenne) ;
+    # main_section : rubrique où elle a le plus d'articles.
+    tout = (filtres[0], ()) + filtres[2:]
+    where, params = portraits_filtres_sql(tout, annee)
+    where, params = ["c.key in (select key from names where n_articles >= ?)"] + where, [seuil] + params
+    conn = sqlite3.connect(f"file:{portraits_db}?mode=ro", uri=True)
+    sec = pd.read_sql_query(f"select c.key, c.section, sum(n_articles) as a from {'cells_year' if annee else 'cells'} c "
+                            f"where {' and '.join(where)} group by c.key, c.section", conn, params=params)
+    conn.close()
+    sec = sec[sec["key"].isin(out["key"])]
+    total = sec.groupby("key")["a"].sum()
+    dedans = sec[sec["section"].isin(filtres[1])].groupby("key")["a"].sum() if filtres[1] else total
+    base = portraits_totaux_annee(tout)
+    part_base = base.loc[base["section"].isin(filtres[1]), "n_articles"].sum() / base["n_articles"].sum() \
+        if filtres[1] else 1.0
+    out["main_section"] = out["key"].map(sec.loc[sec.groupby("key")["a"].idxmax()].set_index("key")["section"]).to_numpy()
+    out["section_share"] = (out["key"].map(dedans) / out["key"].map(total)).to_numpy()
+    out["section_lift"] = out["section_share"] / part_base
     return out
 
 @lru_cache(maxsize=4)

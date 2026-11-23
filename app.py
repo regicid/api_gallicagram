@@ -1336,6 +1336,209 @@ def portraits():
     conn.close()
     return db_df.to_csv(index=False)
 
+@app.route("/names_portraits")
+def names_portraits():
+    # Personnes de portraits.sqlite citées dans au moins min_articles articles (défaut 100).
+    # Renvoie du CSV : name (forme à passer à /portraits), key, n_articles, n_mentions, first_month, last_month,
+    # par n_articles décroissant.
+    try:
+        seuil = int(request.args.get("min_articles", 100))
+    except ValueError:
+        return Response("min_articles doit être un entier", status=400)
+    conn = sqlite3.connect(f"file:{portraits_db}?mode=ro", uri=True)
+    db_df = pd.read_sql_query("select name, key, n_articles, n_mentions, first_month, last_month from names "
+                              "where n_articles >= ? order by n_articles desc", conn, params=[seuil])
+    conn.close()
+    return db_df.to_csv(index=False)
+
+# Scores de cells et suffixe de leurs poids : valence_nm a ses propres poids (W_nm, WW_nm), les autres W et WW
+portraits_scores = {"valence": "", "extremisme": "", "dynamique": "", "journaliste": "", "valence_nm": "_nm"}
+portraits_poids = sorted(set(portraits_scores.values()))
+
+@lru_cache(maxsize=4)
+def portraits_tables(mtime):
+    # Tables présentes dans portraits.sqlite (cells_year et totals_month viennent de portraits_precompute.py)
+    conn = sqlite3.connect(f"file:{portraits_db}?mode=ro", uri=True)
+    tables = {r[0] for r in conn.execute("select name from sqlite_master where type = 'table'")}
+    conn.close()
+    return tables
+
+def portraits_par_annee(filtres):
+    # Vrai si les bornes tombent sur des années entières : la table cells_year suffit alors
+    fr, to = filtres[2:]
+    return (fr is None or fr.endswith("-01")) and (to is None or to.endswith("-12")) \
+        and "cells_year" in portraits_tables(os.path.getmtime(portraits_db))
+
+def portraits_filtres_args(args):
+    # Filtres communs à /rankings_portraits et /baseline : (newspaper, section, from, to) en tuples hachables
+    # (pour les caches), ou un message d'erreur. from/to : AAAA ou AAAAMM -> 'AAAA-MM'.
+    filtres = []
+    for f, v in (("newspaper", args.get("newspaper", args.get("newspapers", ""))), ("section", args.get("section", ""))):
+        filtres.append(tuple(sorted({x.strip() for x in v.split(",") if x.strip()})))
+    for borne, defaut in (("from", "01"), ("to", "12")):
+        d = args.get(borne)
+        if d is not None and not re.fullmatch(r"\d{4}(\d{2})?", d):
+            return "from/to doivent être au format AAAA ou AAAAMM"
+        filtres.append(f"{d[:4]}-{d[4:6] or defaut}" if d else None)
+    return tuple(filtres)
+
+def portraits_filtres_sql(filtres, annee=False):
+    # Conditions SQL (alias c pour cells, ou cells_year si annee) et paramètres correspondant aux filtres.
+    journaux, sections, fr, to = filtres
+    where, params = [], []
+    for col, valeurs in (("newspaper", journaux), ("section", sections)):
+        if valeurs:
+            where.append(f"c.{col} in ({', '.join('?' * len(valeurs))})")
+            params += valeurs
+    for op, d in ((">=", fr), ("<=", to)):
+        if d:
+            where.append(f"c.{'year' if annee else 'month'} {op} ?")
+            params.append(d[:4] if annee else d)
+    return where, params
+
+@lru_cache(maxsize=4)
+def portraits_totaux_mois(mtime):
+    # Sommes de tout le monde par mois × journal × rubrique (poids et S de chaque score), mises en cache tant
+    # que le fichier n'est pas modifié. Base de /baseline, des scores attendus et de /newspapers_portraits.
+    # Lues dans totals_month (portraits_precompute.py), sinon calculées sur cells (parcours complet, ~10 s).
+    sommes = ", ".join([f"sum(W{w}) as W{w}" for w in portraits_poids] + [f"sum(S_{s}) as S_{s}" for s in portraits_scores])
+    source = "totals_month" if "totals_month" in portraits_tables(mtime) else "cells"
+    conn = sqlite3.connect(f"file:{portraits_db}?mode=ro", uri=True)
+    df = pd.read_sql_query(f"select month, newspaper, section, sum(n_articles) as n_articles, {sommes} "
+                           f"from {source} group by month, newspaper, section", conn)
+    conn.close()
+    return df
+
+def portraits_totaux_annee(filtres):
+    # Sommes de tout le monde par année × journal × rubrique, restreintes aux filtres (mois compris).
+    journaux, sections, fr, to = filtres
+    df = portraits_totaux_mois(os.path.getmtime(portraits_db))
+    garde = pd.Series(True, index=df.index)
+    if journaux:
+        garde &= df["newspaper"].isin(journaux)
+    if sections:
+        garde &= df["section"].isin(sections)
+    if fr:
+        garde &= df["month"] >= fr
+    if to:
+        garde &= df["month"] <= to
+    df = df[garde].assign(year=df["month"].str[:4])
+    return df.drop(columns="month").groupby(["year", "newspaper", "section"], as_index=False).sum()
+
+@app.route("/baseline")
+def baseline():
+    # Sommes de toutes les personnes de portraits.sqlite par année × journal × rubrique : le score moyen d'une
+    # cellule est S_{score} / W. Filtres facultatifs : newspaper, section (séparés par ','), from/to (AAAA ou AAAAMM).
+    # Renvoie du CSV : year, newspaper, section, n_articles, W, W_nm, puis S_{score} pour chaque score
+    # (valence, extremisme, dynamique, journaliste, valence_nm ; valence_nm se rapporte à W_nm).
+    filtres = portraits_filtres_args(request.args)
+    if isinstance(filtres, str):
+        return Response(filtres, status=400)
+    return portraits_totaux_annee(filtres).to_csv(index=False)
+
+@app.route("/rankings_portraits")
+def rankings_portraits():
+    # Classement des personnes sur une période, tous journaux confondus (ou filtrés).
+    # Dans cells, chaque article a compte pour w_a (somme des poids de ses segments) et s_a (somme des scores
+    # pondérés) : W = Σw_a, S = Σs_a, WW = Σw_a², SS = Σs_a², WS = Σw_a·s_a. Le score moyen d'une personne est
+    # le rapport R = S / W (score moyen par segment, pondéré) ; son écart-type est celui d'un estimateur par
+    # le ratio avec l'article comme grappe : se² = n/(n-1) · (SS - 2R·WS + R²·WW) / W², n = nombre d'articles.
+    # {score}_expected : score qu'aurait la personne si elle avait, dans chaque cellule année × journal × rubrique
+    # où elle apparaît (dans les filtres), le score moyen des autres personnes de la cellule :
+    # Σ W_p · (S_all − S_p) / (W_all − W_p) ÷ Σ W_p (cellules où la personne est seule exclues).
+    # {score}_mean − {score}_expected est donc son score relatif aux journaux, rubriques et années où on parle d'elle.
+    # from/to : AAAA ou AAAAMM (bornes incluses) ; min : articles minimum sur la période et le périmètre (défaut 100) ;
+    # newspaper (ou newspapers), section : filtres séparés par ',' ; score : tri (valence par défaut,
+    # extremisme, dynamique, journaliste, valence_nm) ; order : desc (défaut) ou asc.
+    # valence_nm a ses propres poids (W_nm, WW_nm), qui remplacent W et WW dans les formules ci-dessus.
+    # Avec des bornes en années entières, les sommes viennent de cells_year (rapide), sinon de cells.
+    # Renvoie du CSV : name, key, n_articles, n_mentions, n_segments, puis pour chaque score
+    # {score}_mean, {score}_se, {score}_low, {score}_high (intervalle à 95 %), {score}_expected, trié par {score}_mean.
+    args = request.args
+    try:
+        seuil = int(args.get("min", 100))
+    except ValueError:
+        return Response("min doit être un entier", status=400)
+    score = args.get("score", "valence")
+    if score not in portraits_scores:
+        return Response(f"score doit être parmi : {', '.join(portraits_scores)}", status=400)
+    order = args.get("order", "desc")
+    if order not in ("asc", "desc"):
+        return Response("order doit être asc ou desc", status=400)
+    filtres = portraits_filtres_args(args)
+    if isinstance(filtres, str):
+        return Response(filtres, status=400)
+    out = portraits_classement(filtres, seuil, os.path.getmtime(portraits_db))
+    out = out.sort_values(f"{score}_mean", ascending=(order == "asc"))
+    return out.to_csv(index=False)
+
+@lru_cache(maxsize=64)
+def portraits_classement(filtres, seuil, mtime):
+    # Agrégation par personne pour /rankings_portraits, mise en cache par jeu de filtres tant que le fichier
+    # n'est pas modifié (mtime fait partie de la clé). Pour chaque score s, df contient W, WW, S, SS, WS et
+    # E_s, EW_s (sommes des contributions au score attendu : attendu = E_s / EW_s).
+    annee = portraits_par_annee(filtres)
+    where, params = portraits_filtres_sql(filtres, annee)
+    # Le nombre total d'articles d'une personne (names) borne celui de la période : on ne parcourt que ses cellules
+    where, params = ["c.key in (select key from names where n_articles >= ?)"] + where, [seuil] + params
+    comptes = ["n_articles", "n_mentions", "n_segments"] + [f"{x}{w}" for w in portraits_poids for x in ("W", "WW")] \
+        + [f"{x}_{s}" for s in portraits_scores for x in ("S", "SS", "WS")]
+    conn = sqlite3.connect(f"file:{portraits_db}?mode=ro", uri=True)
+    if annee:
+        # Bornes en années entières : cells_year a déjà, par cellule année × journal × rubrique, les contributions
+        # au score attendu (portraits_precompute.py), qui ne dépendent pas des filtres. Tout se somme en SQL.
+        cols = comptes + [f"{x}_{s}" for s in portraits_scores for x in ("E", "EW")]
+        df = pd.read_sql_query(f"select c.key, {', '.join(f'sum({x}) as {x}' for x in cols)} from cells_year c "
+                               f"where {' and '.join(where)} group by c.key having sum(n_articles) >= ?",
+                               conn, params=params + [seuil]).set_index("key")
+    else:
+        # Bornes au mois : sommes par personne × année × journal × rubrique sur cells, comparées aux totaux des
+        # mêmes cellules restreints aux filtres (portraits_totaux_annee), puis agrégées par personne
+        cel = pd.read_sql_query(
+            f"select c.key, substr(c.month, 1, 4) as year, c.newspaper, c.section, "
+            f"{', '.join(f'sum({x}) as {x}' for x in comptes)} from cells c where {' and '.join(where)} "
+            f"group by c.key, year, c.newspaper, c.section", conn, params=params)
+        cel = cel.merge(portraits_totaux_annee(filtres), on=["year", "newspaper", "section"], suffixes=("", "_all"))
+        for s, w in portraits_scores.items():
+            autres_W = cel[f"W{w}_all"] - cel[f"W{w}"]
+            pas_seul = autres_W > 1e-9 * cel[f"W{w}_all"].abs().clip(lower=1)  # la personne n'est pas seule
+            cel[f"E_{s}"] = (cel[f"W{w}"] * (cel[f"S_{s}_all"] - cel[f"S_{s}"]) / autres_W).where(pas_seul, 0)
+            cel[f"EW_{s}"] = cel[f"W{w}"].where(pas_seul, 0)
+        df = cel.groupby("key")[comptes + [f"{x}_{s}" for s in portraits_scores for x in ("E", "EW")]].sum()
+    noms = pd.read_sql_query("select name, key from names where n_articles >= ?", conn, params=[seuil])
+    conn.close()
+    df = df[(df["n_articles"] >= seuil) & (df["W"] > 0)]
+    out = noms[noms["key"].isin(df.index)].reset_index(drop=True)
+    df = df.loc[out["key"]]
+    out = out.join(df[["n_articles", "n_mentions", "n_segments"]].reset_index(drop=True))
+    n = df["n_articles"].to_numpy(dtype=float)
+    with np.errstate(divide="ignore", invalid="ignore"):  # personne sans poids nm : scores nm vides
+        for s, w in portraits_scores.items():
+            W, WW = df[f"W{w}"].to_numpy(), df[f"WW{w}"].to_numpy()
+            r = df[f"S_{s}"].to_numpy() / W
+            var = (df[f"SS_{s}"].to_numpy() - 2 * r * df[f"WS_{s}"].to_numpy() + r ** 2 * WW) / W ** 2
+            se = np.sqrt(np.clip(var, 0, None) * n / np.maximum(n - 1, 1))
+            out[f"{s}_mean"], out[f"{s}_se"], out[f"{s}_low"], out[f"{s}_high"] = r, se, r - 1.96 * se, r + 1.96 * se
+            out[f"{s}_expected"] = df[f"E_{s}"].to_numpy() / df[f"EW_{s}"].to_numpy()
+    return out
+
+@lru_cache(maxsize=4)
+def portraits_journaux(mtime):
+    # Couples (journal, rubrique) présents dans cells, tirés des totaux mensuels (mis en cache)
+    return portraits_totaux_mois(mtime)[["newspaper", "section"]].drop_duplicates()
+
+@app.route("/newspapers_portraits")
+def newspapers_portraits():
+    # Journaux de portraits.sqlite. section : ne garde que les journaux ayant au moins une de ces rubriques
+    # (séparées par ',', ex. section=sport).
+    # Renvoie du CSV : newspaper, sections (toutes les rubriques du journal, séparées par ',').
+    db_df = portraits_journaux(os.path.getmtime(portraits_db))
+    sections = [s.strip() for s in request.args.get("section", "").split(",") if s.strip()]
+    journaux = db_df.groupby("newspaper")["section"].apply(lambda s: ",".join(sorted(s))).reset_index(name="sections")
+    if sections:
+        journaux = journaux[journaux["newspaper"].isin(db_df.loc[db_df["section"].isin(sections), "newspaper"])]
+    return journaux.to_csv(index=False)
+
 corpus_rap =pd.read_csv("~/LRFAF/corpus.csv")
 
 @app.route("/source_rap")

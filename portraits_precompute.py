@@ -6,6 +6,7 @@
 #                  E_s = W_p · (S_all − S_p) / (W_all − W_p) et EW_s = W_p, où _p désigne la personne et _all tout
 #                  le monde dans la cellule année × journal × rubrique (0 et 0 si la personne y est seule ; W_nm
 #                  et S_valence_nm pour valence_nm). Score attendu = ΣE_s / ΣEW_s sur les cellules retenues.
+#                  Index cells_year_section (key, section, year, newspaper, n_articles) : articles par rubrique.
 #   totals_month : sommes de tout le monde par mois × journal × rubrique (W, W_nm et S_* seulement)
 # Les tables sont remplacées dans une seule transaction ; les colonnes de comptes et de sommes sont reprises
 # telles quelles de cells (agent, patient... compris), seules key/month/newspaper/section sont regroupées.
@@ -48,6 +49,8 @@ conn.execute("create table totals_month (month text, newspaper text, section tex
              + ", ".join(f'"{c}" real' for c in totaux) + ", primary key (month, newspaper, section)) without rowid")
 conn.execute("insert into totals_month select month, newspaper, section, "
              + ", ".join(f'sum("{c}")' for c in totaux) + " from cells group by month, newspaper, section")
+# Index étroit pour compter les articles par personne × rubrique sans tri (section_share de /rankings_portraits)
+conn.execute("create index cells_year_section on cells_year(key, section, year, newspaper, n_articles)")
 conn.execute("commit")
 try:
     conn.execute("analyze")  # statistiques du planificateur : utile, pas indispensable

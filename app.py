@@ -11,6 +11,7 @@ import unicodedata
 import json
 from waitress import serve
 from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor
 from flask_cors import CORS
 import requests
 import os
@@ -1452,13 +1453,14 @@ def rankings_portraits():
     # extremisme, dynamique, journaliste, valence_nm) ; order : desc (défaut) ou asc.
     # valence_nm a ses propres poids (W_nm, WW_nm), qui remplacent W et WW dans les formules ci-dessus.
     # Avec des bornes en années entières, les sommes viennent de cells_year (rapide), sinon de cells.
-    # Rubriques : main_section (rubrique où la personne a le plus d'articles), section_share (part de ses articles
-    # dans les rubriques demandées, même période et mêmes journaux), section_lift (section_share rapportée à la
-    # part de ces rubriques pour tout le monde) et off_section (section_lift < off_section_lift, défaut 0.25 :
-    # personne citée dans la rubrique sans en relever, comme Poutine en sport ; toujours faux sans filtre section).
+    # section_flag=true (option, un peu plus lent au premier appel) ajoute main_section (rubrique où la personne a
+    # le plus d'articles), section_share (part de ses articles dans les rubriques demandées, même période et mêmes
+    # journaux ; plusieurs rubriques comptent ensemble), section_lift (section_share rapportée à la part de ces
+    # rubriques pour tout le monde) et off_section (section_lift < off_section_lift, défaut 0.25 : personne citée
+    # dans la rubrique sans en relever, comme Poutine en sport ; toujours faux sans filtre section).
     # Renvoie du CSV : name, key, n_articles, n_mentions, n_segments, puis pour chaque score
-    # {score}_mean, {score}_se, {score}_low, {score}_high (intervalle à 95 %), {score}_expected, puis main_section,
-    # section_share, section_lift, off_section ; trié par {score}_mean.
+    # {score}_mean, {score}_se, {score}_low, {score}_high (intervalle à 95 %), {score}_expected, [puis main_section,
+    # section_share, section_lift, off_section avec section_flag=true] ; trié par {score}_mean.
     args = request.args
     try:
         seuil = int(args.get("min", 100))
@@ -1477,10 +1479,45 @@ def rankings_portraits():
         seuil_rubrique = float(args.get("off_section_lift", 0.25))
     except ValueError:
         return Response("off_section_lift doit être un nombre", status=400)
-    out = portraits_classement(filtres, seuil, os.path.getmtime(portraits_db))
-    out = out.assign(off_section=out["section_lift"] < seuil_rubrique)
+    mtime = os.path.getmtime(portraits_db)
+    if args.get("section_flag", "false").lower() in ("true", "1"):
+        # Appartenance aux rubriques calculée en parallèle du classement
+        rubriques = portraits_pool.submit(portraits_appartenance, filtres, seuil, mtime)
+        out = portraits_classement(filtres, seuil, mtime)
+        out = out.join(rubriques.result(), on="key")
+        out = out.assign(off_section=out["section_lift"] < seuil_rubrique)
+    else:
+        out = portraits_classement(filtres, seuil, mtime)
     out = out.sort_values(f"{score}_mean", ascending=(order == "asc"))
     return out.to_csv(index=False)
+
+# Requêtes annexes de /rankings_portraits exécutées en parallèle (sqlite3 libère le GIL pendant les requêtes)
+portraits_pool = ThreadPoolExecutor(max_workers=4)
+
+@lru_cache(maxsize=64)
+def portraits_appartenance(filtres, seuil, mtime):
+    # Appartenance aux rubriques demandées (section_flag de /rankings_portraits), par personne : articles par
+    # rubrique sur la même période et les mêmes journaux, toutes rubriques confondues. section_share : part de ses
+    # articles dans les rubriques demandées (prises ensemble) ; section_lift : cette part rapportée à celle de tout
+    # le monde (1 = autant que la moyenne) ; main_section : rubrique où elle a le plus d'articles.
+    # Sur cells_year, l'index cells_year_section (key, section, ...) évite un tri.
+    tout = (filtres[0], ()) + filtres[2:]
+    annee = portraits_par_annee(filtres)
+    where, params = portraits_filtres_sql(tout, annee)
+    where, params = ["c.key in (select key from names where n_articles >= ?)"] + where, [seuil] + params
+    conn = sqlite3.connect(f"file:{portraits_db}?mode=ro", uri=True)
+    sec = pd.read_sql_query(f"select c.key, c.section, sum(n_articles) as a from {'cells_year' if annee else 'cells'} c "
+                            f"where {' and '.join(where)} group by c.key, c.section", conn, params=params)
+    conn.close()
+    total = sec.groupby("key")["a"].sum()
+    dedans = sec[sec["section"].isin(filtres[1])].groupby("key")["a"].sum() if filtres[1] else total
+    base = portraits_totaux_annee(tout)
+    part_base = base.loc[base["section"].isin(filtres[1]), "n_articles"].sum() / base["n_articles"].sum() \
+        if filtres[1] else 1.0
+    res = pd.DataFrame({"main_section": sec.loc[sec.groupby("key")["a"].idxmax()].set_index("key")["section"],
+                        "section_share": dedans.reindex(total.index, fill_value=0) / total})
+    res["section_lift"] = res["section_share"] / part_base
+    return res
 
 @lru_cache(maxsize=64)
 def portraits_classement(filtres, seuil, mtime):
@@ -1530,26 +1567,6 @@ def portraits_classement(filtres, seuil, mtime):
             se = np.sqrt(np.clip(var, 0, None) * n / np.maximum(n - 1, 1))
             out[f"{s}_mean"], out[f"{s}_se"], out[f"{s}_low"], out[f"{s}_high"] = r, se, r - 1.96 * se, r + 1.96 * se
             out[f"{s}_expected"] = df[f"E_{s}"].to_numpy() / df[f"EW_{s}"].to_numpy()
-    # Appartenance aux rubriques demandées : articles de la personne par rubrique, sur la même période et les
-    # mêmes journaux mais toutes rubriques confondues. section_share : part de ses articles dans les rubriques
-    # demandées ; section_lift : cette part rapportée à celle de tout le monde (1 = autant que la moyenne) ;
-    # main_section : rubrique où elle a le plus d'articles.
-    tout = (filtres[0], ()) + filtres[2:]
-    where, params = portraits_filtres_sql(tout, annee)
-    where, params = ["c.key in (select key from names where n_articles >= ?)"] + where, [seuil] + params
-    conn = sqlite3.connect(f"file:{portraits_db}?mode=ro", uri=True)
-    sec = pd.read_sql_query(f"select c.key, c.section, sum(n_articles) as a from {'cells_year' if annee else 'cells'} c "
-                            f"where {' and '.join(where)} group by c.key, c.section", conn, params=params)
-    conn.close()
-    sec = sec[sec["key"].isin(out["key"])]
-    total = sec.groupby("key")["a"].sum()
-    dedans = sec[sec["section"].isin(filtres[1])].groupby("key")["a"].sum() if filtres[1] else total
-    base = portraits_totaux_annee(tout)
-    part_base = base.loc[base["section"].isin(filtres[1]), "n_articles"].sum() / base["n_articles"].sum() \
-        if filtres[1] else 1.0
-    out["main_section"] = out["key"].map(sec.loc[sec.groupby("key")["a"].idxmax()].set_index("key")["section"]).to_numpy()
-    out["section_share"] = (out["key"].map(dedans) / out["key"].map(total)).to_numpy()
-    out["section_lift"] = out["section_share"] / part_base
     return out
 
 @lru_cache(maxsize=4)

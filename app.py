@@ -7,6 +7,7 @@ import sqlite3
 import pandas as pd
 import numpy as np
 import re
+import unicodedata
 import json
 from waitress import serve
 from functools import lru_cache
@@ -1291,6 +1292,49 @@ def mots_du_jour_ngram():
         return Response(str(e), status=400)
     print("mots_du_jour " + ",".join(corpora or ["tous"]) + f" {fr}-{to} {resultat['duree_s']}s")
     return jsonify(resultat)
+
+portraits_db = "/opt/bazoulay/portraits.sqlite"
+portraits_filtres = ("newspaper", "section")
+
+def portraits_cle(nom):
+    # Clé de la table names : minuscules, sans accents, tout ce qui n'est ni lettre ni chiffre devient une espace
+    # ('Jean-Luc Mélenchon' -> 'jean luc melenchon', "A'Salfo" -> 'a salfo').
+    nom = unicodedata.normalize("NFKD", nom).encode("ascii", "ignore").decode().lower()
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", nom).split())
+
+@app.route("/portraits")
+def portraits():
+    # Portraits de personnes dans la presse (portraits.sqlite) : une ligne par mois, journal et rubrique,
+    # avec tous les champs de la table cells tels quels (comptes, sommes W, S_*, SS_*, WS_*...), sans agrégation.
+    # nom : une ou plusieurs personnes séparées par ',' (accents, casse et tirets indifférents) ;
+    # newspaper, section : filtres optionnels, valeurs séparées par ',' (ex. newspaper=lemonde,liberation) ;
+    # from/to : AAAA ou AAAAMM, bornes incluses.
+    # Renvoie du CSV : nom (forme affichée), puis les colonnes de cells.
+    args = request.args
+    noms = [n for n in args.get("nom", args.get("name", "")).split(",") if n.strip()]
+    if not noms:
+        return Response("nom requis", status=400)
+    cles = list(dict.fromkeys(portraits_cle(n) for n in noms))
+    where, params = [f"c.key in ({', '.join('?' * len(cles))})"], cles
+    for f in portraits_filtres:
+        valeurs = [v.strip() for v in args.get(f, "").split(",") if v.strip()]
+        if valeurs:
+            where.append(f"c.{f} in ({', '.join('?' * len(valeurs))})")
+            params += valeurs
+    for borne, op, defaut in (("from", ">=", "01"), ("to", "<=", "12")):
+        d = args.get(borne)
+        if d is None:
+            continue
+        if not re.fullmatch(r"\d{4}(\d{2})?", d):
+            return Response("from/to doivent être au format AAAA ou AAAAMM", status=400)
+        where.append(f"c.month {op} ?")
+        params.append(f"{d[:4]}-{d[4:6] or defaut}")
+    conn = sqlite3.connect(f"file:{portraits_db}?mode=ro", uri=True)
+    db_df = pd.read_sql_query(
+        "select n.name as nom, c.* from cells c join names n on n.key = c.key where "
+        + " and ".join(where) + " order by c.key, c.month, c.newspaper, c.section", conn, params=params)
+    conn.close()
+    return db_df.to_csv(index=False)
 
 corpus_rap =pd.read_csv("~/LRFAF/corpus.csv")
 

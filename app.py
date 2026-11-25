@@ -16,6 +16,7 @@ from flask_cors import CORS
 import requests
 import os
 from mots_du_jour import mots_du_jour as calcul_mots_du_jour
+import portraits_prior
 
 app = Flask(__name__)
 CORS(app)
@@ -1461,6 +1462,14 @@ def rankings_portraits():
     # Renvoie du CSV : name, key, n_articles, n_mentions, n_segments, puis pour chaque score
     # {score}_mean, {score}_se, {score}_low, {score}_high (intervalle à 95 %), {score}_expected, [puis main_section,
     # section_share, section_lift, off_section avec section_flag=true] ; trié par {score}_mean.
+    # format=json (défaut csv) : {"rows": [mêmes lignes, en objets], "prior": {...}}. prior = prior entre personnes
+    # pour le rétrécissement empirical Bayes du front (R* = μ + k(R − μ), k = τ²/(τ² + se²), se² = σ²·WW/W²),
+    # sur les personnes avec ≥ min_prior articles dans les filtres (défaut 30, indépendant de min) :
+    # {"K", "K_rel", "min_prior", "sigma2", "mu", "tau2", "mu_rel", "tau2_rel"}, chacun {valence, extremisme,
+    # dynamique}. sigma2 : variance intra-personne poolée des scores d'articles ; mu, tau2 : Paule–Mandel sur
+    # les scores R ; mu_rel, tau2_rel : idem sur R − {score}_expected. Valeurs null et "reason" si K < 3.
+    # En JSON, chaque ligne a en plus n_eff = W²/WW (nombre effectif d'articles) : se_model² = sigma2 / n_eff, à
+    # utiliser pour le rétrécissement (et non {score}_se, robuste, qui s'effondre vers 0 avec peu d'articles).
     args = request.args
     try:
         seuil = int(args.get("min", 100))
@@ -1479,17 +1488,55 @@ def rankings_portraits():
         seuil_rubrique = float(args.get("off_section_lift", 0.25))
     except ValueError:
         return Response("off_section_lift doit être un nombre", status=400)
-    mtime = os.path.getmtime(portraits_db)
-    if args.get("section_flag", "false").lower() in ("true", "1"):
+    fmt = args.get("format", "csv")
+    if fmt not in ("csv", "json"):
+        return Response("format doit être csv ou json", status=400)
+    try:
+        min_prior = int(args.get("min_prior", portraits_prior.MIN_PRIOR))
+    except ValueError:
+        return Response("min_prior doit être un entier", status=400)
+    drapeau = args.get("section_flag", "false").lower() in ("true", "1")
+    corps = portraits_reponse(filtres, seuil, score, order, drapeau, seuil_rubrique, fmt, min_prior,
+                              os.path.getmtime(portraits_db))
+    if fmt == "json":
+        return Response(corps, mimetype="application/json")
+    return corps
+
+@lru_cache(maxsize=8)
+def portraits_reponse(filtres, seuil, score, order, drapeau, seuil_rubrique, fmt, min_prior, mtime):
+    # Corps de la réponse de /rankings_portraits, mis en cache tel quel (la sérialisation CSV d'un classement de
+    # plusieurs milliers de personnes coûte ~300 ms). En JSON, l'agrégat est fait au seuil min(min, min_prior)
+    # pour que le prior porte sur toute sa population, puis les lignes sont filtrées à min.
+    base = min(seuil, min_prior) if fmt == "json" else None
+    if drapeau:
         # Appartenance aux rubriques calculée en parallèle du classement
         rubriques = portraits_pool.submit(portraits_appartenance, filtres, seuil, mtime)
-        out = portraits_classement(filtres, seuil, mtime)
+        out = portraits_classement(filtres, seuil, mtime, base)
         out = out.join(rubriques.result(), on="key")
         out = out.assign(off_section=out["section_lift"] < seuil_rubrique)
     else:
-        out = portraits_classement(filtres, seuil, mtime)
+        out = portraits_classement(filtres, seuil, mtime, base)
     out = out.sort_values(f"{score}_mean", ascending=(order == "asc"))
-    return out.to_csv(index=False)
+    if fmt == "csv":
+        return out.to_csv(index=False)
+    agr = portraits_agregat(filtres, base, mtime)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out = out.assign(n_eff=(agr["W"] ** 2 / agr["WW"]).reindex(out["key"]).to_numpy())
+    prior = portraits_prior_entre(filtres, min_prior, base, mtime)
+    return '{"rows": ' + out.to_json(orient="records") + ', "prior": ' + json.dumps(prior) + "}"
+
+@lru_cache(maxsize=64)
+def portraits_prior_entre(filtres, min_prior, base, mtime):
+    # Prior entre personnes de /rankings_portraits (portraits_prior.prior_entre) sur l'agrégat déjà calculé :
+    # personnes avec ≥ min_prior articles dans les filtres, σ² poolé sur elles, Paule–Mandel sur R et R − E.
+    df = portraits_agregat(filtres, base, mtime)
+    sc = portraits_prior.SCORES_PRIOR
+    col = lambda x: np.stack([df[f"{x}_{s}"].to_numpy(float) for s in sc]) if len(df) else np.zeros((len(sc), 0))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        E = col("E") / col("EW")
+    return portraits_prior.prior_entre(df["n_articles"].to_numpy(float), df["W"].to_numpy(float),
+                                       df["WW"].to_numpy(float), col("S"), col("SS"), col("WS"), E,
+                                       scores=sc, min_prior=min_prior)
 
 # Requêtes annexes de /rankings_portraits exécutées en parallèle (sqlite3 libère le GIL pendant les requêtes)
 portraits_pool = ThreadPoolExecutor(max_workers=4)
@@ -1514,16 +1561,18 @@ def portraits_appartenance(filtres, seuil, mtime):
     base = portraits_totaux_annee(tout)
     part_base = base.loc[base["section"].isin(filtres[1]), "n_articles"].sum() / base["n_articles"].sum() \
         if filtres[1] else 1.0
-    res = pd.DataFrame({"main_section": sec.loc[sec.groupby("key")["a"].idxmax()].set_index("key")["section"],
+    # Rubrique principale : tri puis première ligne par personne (groupby().idxmax() boucle en Python, ~2,5 s)
+    principale = sec.sort_values(["key", "a"], ascending=[True, False]).drop_duplicates("key").set_index("key")["section"]
+    res = pd.DataFrame({"main_section": principale,
                         "section_share": dedans.reindex(total.index, fill_value=0) / total})
     res["section_lift"] = res["section_share"] / part_base
     return res
 
-@lru_cache(maxsize=64)
-def portraits_classement(filtres, seuil, mtime):
-    # Agrégation par personne pour /rankings_portraits, mise en cache par jeu de filtres tant que le fichier
-    # n'est pas modifié (mtime fait partie de la clé). Pour chaque score s, df contient W, WW, S, SS, WS et
-    # E_s, EW_s (sommes des contributions au score attendu : attendu = E_s / EW_s).
+@lru_cache(maxsize=16)
+def portraits_agregat(filtres, seuil, mtime):
+    # Sommes par personne (index key) pour /rankings_portraits, personnes avec ≥ seuil articles dans les filtres,
+    # mises en cache par jeu de filtres tant que le fichier n'est pas modifié (mtime fait partie de la clé).
+    # Pour chaque score s : W, WW, S, SS, WS et E_s, EW_s (contributions au score attendu : attendu = E_s / EW_s).
     annee = portraits_par_annee(filtres)
     where, params = portraits_filtres_sql(filtres, annee)
     # Le nombre total d'articles d'une personne (names) borne celui de la période : on ne parcourt que ses cellules
@@ -1552,8 +1601,23 @@ def portraits_classement(filtres, seuil, mtime):
             cel[f"E_{s}"] = (cel[f"W{w}"] * (cel[f"S_{s}_all"] - cel[f"S_{s}"]) / autres_W).where(pas_seul, 0)
             cel[f"EW_{s}"] = cel[f"W{w}"].where(pas_seul, 0)
         df = cel.groupby("key")[comptes + [f"{x}_{s}" for s in portraits_scores for x in ("E", "EW")]].sum()
-    noms = pd.read_sql_query("select name, key from names where n_articles >= ?", conn, params=[seuil])
     conn.close()
+    return df[df["n_articles"] >= seuil]
+
+@lru_cache(maxsize=4)
+def portraits_noms(mtime):
+    conn = sqlite3.connect(f"file:{portraits_db}?mode=ro", uri=True)
+    noms = pd.read_sql_query("select name, key, n_articles from names", conn)
+    conn.close()
+    return noms
+
+@lru_cache(maxsize=64)
+def portraits_classement(filtres, seuil, mtime, base=None):
+    # Classement de /rankings_portraits à partir des sommes de portraits_agregat. base (≤ seuil) : seuil de
+    # l'agrégat réutilisé (celui du prior, pour ne parcourir les cellules qu'une fois) ; par défaut seuil.
+    df = portraits_agregat(filtres, seuil if base is None else min(base, seuil), mtime)
+    noms = portraits_noms(mtime)
+    noms = noms.loc[noms["n_articles"] >= seuil, ["name", "key"]]
     df = df[(df["n_articles"] >= seuil) & (df["W"] > 0)]
     out = noms[noms["key"].isin(df.index)].reset_index(drop=True)
     df = df.loc[out["key"]]
